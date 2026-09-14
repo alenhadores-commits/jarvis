@@ -1,0 +1,518 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>J.A.R.V.I.S</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: #05080d;
+    color: #d9f7ff;
+    font-family: Arial, sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+header {
+    padding: 18px 24px;
+    border-bottom: 1px solid #12313d;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logo {
+    font-size: 24px;
+    font-weight: bold;
+    letter-spacing: 5px;
+}
+
+.status {
+    font-size: 13px;
+    color: #57e6a5;
+}
+
+#chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 25px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.mensagem {
+    max-width: 80%;
+    padding: 14px 18px;
+    border-radius: 12px;
+    white-space: pre-wrap;
+    line-height: 1.5;
+}
+
+.usuario {
+    align-self: flex-end;
+    background: #123544;
+}
+
+.jarvis {
+    align-self: flex-start;
+    background: #0b151c;
+    border: 1px solid #164252;
+}
+
+.controles {
+    border-top: 1px solid #12313d;
+    padding: 14px;
+}
+
+.botoes {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+button {
+    background: #0b1b23;
+    color: #bfefff;
+    border: 1px solid #1d5668;
+    border-radius: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #123544;
+}
+
+.ativo {
+    border-color: #35e6a0;
+    color: #35e6a0;
+}
+
+.mic-ativo {
+    border-color: #ff6262;
+    color: #ff7777;
+}
+
+.linha {
+    display: flex;
+    gap: 10px;
+}
+
+textarea {
+    flex: 1;
+    resize: none;
+    min-height: 55px;
+    max-height: 180px;
+    background: #080f15;
+    color: white;
+    border: 1px solid #194353;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 15px;
+    outline: none;
+}
+
+#enviar {
+    min-width: 100px;
+}
+
+#vozStatus {
+    font-size: 12px;
+    color: #7895a0;
+    margin-top: 8px;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <div class="logo">J.A.R.V.I.S</div>
+    <div class="status" id="status">CONECTANDO...</div>
+</header>
+
+<div id="chat">
+    <div class="mensagem jarvis">
+        JARVIS online. Estou ouvindo, chefe.
+    </div>
+</div>
+
+<div class="controles">
+
+    <div class="botoes">
+        <button id="btnVoz" onclick="alternarVoz()">
+            🔊 VOZ: DESLIGADA
+        </button>
+
+        <button id="btnMic" onclick="alternarMicrofone()">
+            🎙️ MICROFONE: DESLIGADO
+        </button>
+    </div>
+
+    <div class="linha">
+        <textarea
+            id="mensagem"
+            placeholder="Fale ou escreva para o JARVIS..."
+        ></textarea>
+
+        <button id="enviar" onclick="enviar()">
+            ENVIAR
+        </button>
+    </div>
+
+    <div id="vozStatus">
+        Voz e microfone prontos.
+    </div>
+
+</div>
+
+<script>
+
+let vozAtiva = false;
+let microfoneAtivo = false;
+let reconhecimento = null;
+
+const chat = document.getElementById("chat");
+const mensagem = document.getElementById("mensagem");
+const statusEl = document.getElementById("status");
+const btnVoz = document.getElementById("btnVoz");
+const btnMic = document.getElementById("btnMic");
+const vozStatus = document.getElementById("vozStatus");
+
+
+function adicionarMensagem(texto, classe) {
+
+    const div = document.createElement("div");
+
+    div.className = "mensagem " + classe;
+    div.textContent = texto;
+
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+}
+
+
+function falar(texto) {
+
+    if (!vozAtiva || !("speechSynthesis" in window)) {
+        return;
+    }
+
+    window.speechSynthesis.cancel();
+
+    const fala = new SpeechSynthesisUtterance(texto);
+
+    fala.lang = "pt-BR";
+    fala.rate = 1;
+    fala.pitch = 1;
+    fala.volume = 1;
+
+    window.speechSynthesis.speak(fala);
+}
+
+
+function alternarVoz() {
+
+    vozAtiva = !vozAtiva;
+
+    if (vozAtiva) {
+
+        btnVoz.textContent = "🔊 VOZ: LIGADA";
+        btnVoz.classList.add("ativo");
+
+        vozStatus.textContent = "Resposta por voz ativada.";
+
+    } else {
+
+        btnVoz.textContent = "🔊 VOZ: DESLIGADA";
+        btnVoz.classList.remove("ativo");
+
+        window.speechSynthesis.cancel();
+
+        vozStatus.textContent = "Resposta por voz desativada.";
+    }
+}
+
+
+function criarReconhecimento() {
+
+    const SpeechRecognition =
+        window.SpeechRecognition ||
+        window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+
+        vozStatus.textContent =
+            "Reconhecimento de voz não disponível neste navegador.";
+
+        return null;
+    }
+
+    const reconhecimento = new SpeechRecognition();
+
+    reconhecimento.lang = "pt-BR";
+    reconhecimento.continuous = true;
+    reconhecimento.interimResults = false;
+    reconhecimento.maxAlternatives = 1;
+
+    reconhecimento.onstart = function() {
+
+        btnMic.textContent = "🎙️ MICROFONE: LIGADO";
+        btnMic.classList.add("mic-ativo");
+
+        vozStatus.textContent =
+            "Microfone ligado. Estou ouvindo...";
+    };
+
+    reconhecimento.onresult = function(event) {
+
+        let texto = "";
+
+        for (
+            let i = event.resultIndex;
+            i < event.results.length;
+            i++
+        ) {
+
+            if (event.results[i].isFinal) {
+                texto += event.results[i][0].transcript;
+            }
+        }
+
+        texto = texto.trim();
+
+        if (texto) {
+
+            mensagem.value = texto;
+
+            enviar();
+        }
+    };
+
+    reconhecimento.onerror = function(event) {
+
+        console.log("Microfone:", event.error);
+
+        if (
+            event.error === "not-allowed" ||
+            event.error === "service-not-allowed"
+        ) {
+
+            microfoneAtivo = false;
+
+            btnMic.textContent =
+                "🎙️ MICROFONE: DESLIGADO";
+
+            btnMic.classList.remove("mic-ativo");
+
+            vozStatus.textContent =
+                "Permissão do microfone negada.";
+        }
+    };
+
+    reconhecimento.onend = function() {
+
+        if (microfoneAtivo) {
+
+            setTimeout(function() {
+
+                try {
+                    reconhecimento.start();
+                } catch (e) {
+                }
+
+            }, 300);
+
+        } else {
+
+            btnMic.textContent =
+                "🎙️ MICROFONE: DESLIGADO";
+
+            btnMic.classList.remove("mic-ativo");
+        }
+    };
+
+    return reconhecimento;
+}
+
+
+function alternarMicrofone() {
+
+    if (!reconhecimento) {
+
+        reconhecimento = criarReconhecimento();
+
+        if (!reconhecimento) {
+            return;
+        }
+    }
+
+    if (!microfoneAtivo) {
+
+        microfoneAtivo = true;
+
+        try {
+            reconhecimento.start();
+        } catch (e) {
+            console.log(e);
+        }
+
+    } else {
+
+        microfoneAtivo = false;
+
+        try {
+            reconhecimento.stop();
+        } catch (e) {
+        }
+
+        btnMic.textContent =
+            "🎙️ MICROFONE: DESLIGADO";
+
+        btnMic.classList.remove("mic-ativo");
+
+        vozStatus.textContent =
+            "Microfone desligado.";
+    }
+}
+
+
+async function enviar() {
+
+    const texto = mensagem.value.trim();
+
+    if (!texto) {
+        return;
+    }
+
+    adicionarMensagem(texto, "usuario");
+
+    mensagem.value = "";
+
+    statusEl.textContent = "JARVIS PROCESSANDO...";
+    statusEl.style.color = "#ffd166";
+
+    try {
+
+        const resposta = await fetch("/api/chat", {
+
+            method: "POST",
+
+            headers: {
+                "Content-Type": "application/json"
+            },
+
+            body: JSON.stringify({
+                message: texto
+            })
+        });
+
+        const dados = await resposta.json();
+
+        if (!resposta.ok) {
+            throw new Error(
+                dados.detail || "Erro na comunicação."
+            );
+        }
+
+        adicionarMensagem(
+            dados.response,
+            "jarvis"
+        );
+
+        falar(dados.response);
+
+        statusEl.textContent = "JARVIS ONLINE";
+        statusEl.style.color = "#57e6a5";
+
+    } catch (erro) {
+
+        adicionarMensagem(
+            "Falha na comunicação com o JARVIS: " +
+            erro.message,
+            "jarvis"
+        );
+
+        statusEl.textContent = "ERRO";
+        statusEl.style.color = "#ff6262";
+    }
+}
+
+
+mensagem.addEventListener(
+    "keydown",
+    function(event) {
+
+        if (
+            event.key === "Enter" &&
+            !event.shiftKey
+        ) {
+
+            event.preventDefault();
+
+            enviar();
+        }
+    }
+);
+
+
+async function verificarStatus() {
+
+    try {
+
+        const resposta =
+            await fetch("/api/status");
+
+        const dados =
+            await resposta.json();
+
+        if (
+            resposta.ok &&
+            dados.cloud === "online"
+        ) {
+
+            statusEl.textContent =
+                "JARVIS ONLINE";
+
+            statusEl.style.color =
+                "#57e6a5";
+
+        } else {
+
+            statusEl.textContent =
+                "JARVIS OFFLINE";
+
+            statusEl.style.color =
+                "#ff6262";
+        }
+
+    } catch (erro) {
+
+        statusEl.textContent =
+            "SEM CONEXÃO";
+
+        statusEl.style.color =
+            "#ff6262";
+    }
+}
+
+
+verificarStatus();
+
+setInterval(
+    verificarStatus,
+    15000
+);
+
+</script>
+
+</body>
+</html>

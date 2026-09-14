@@ -1,0 +1,85 @@
+﻿[
+  {
+    "nome": "TESTE ABRIR CALCULADORA",
+    "gatilhos": [
+      "teste abrir calculadora",
+      "testar calculadora"
+    ],
+    "acoes": [
+      {
+        "tipo": "abrir_programa",
+        "valor": "calc.exe"
+      },
+      {
+        "tipo": "falar",
+        "valor": "Teste da calculadora aprovado, chefe."
+      }
+    ],
+    "ativa": true
+  },
+  {
+    "nome": "TESTE ABRIR BLOCO DE NOTAS",
+    "gatilhos": [
+      "teste abrir bloco de notas",
+      "testar bloco de notas"
+    ],
+    "acoes": [
+      {
+        "tipo": "abrir_programa",
+        "valor": "notepad.exe"
+      },
+      {
+        "tipo": "falar",
+        "valor": "Teste do bloco de notas aprovado, chefe."
+      }
+    ],
+    "ativa": true
+  },
+  {
+    "nome": "TESTE MOSTRAR AREA DE TRABALHO",
+    "gatilhos": [
+      "teste mostrar area de trabalho"
+    ],
+    "acoes": [
+      {
+        "tipo": "combinacao_teclas",
+        "valor": "win d"
+      }
+    ],
+    "ativa": true
+  },
+  {
+    "nome": "TESTE ABRIR GOOGLE",
+    "gatilhos": [
+      "teste abrir google"
+    ],
+    "acoes": [
+      {
+        "tipo": "powershell",
+        "valor": "Start-Process \"https://www.google.com\""
+      }
+    ],
+    "ativa": true
+  },
+  {
+    "nome": "TESTE MULTI ACAO",
+    "gatilhos": [
+      "teste multi acao automatico"
+    ],
+    "acoes": [
+      {
+        "tipo": "abrir_programa",
+        "valor": "notepad.exe"
+      },
+      {
+        "tipo": "esperar",
+        "valor": "2"
+      },
+      {
+        "tipo": "falar",
+        "valor": "Treinamento automático concluído, chefe."
+      }
+    ],
+    "ativa": true
+  }
+]

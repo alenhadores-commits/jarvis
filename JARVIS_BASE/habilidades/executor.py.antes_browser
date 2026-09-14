@@ -1,0 +1,183 @@
+﻿# -*- coding: utf-8 -*-
+
+"""
+J.A.R.V.I.S — EXECUTOR DE HABILIDADES
+"""
+
+from __future__ import annotations
+
+import subprocess
+import time
+import webbrowser
+from typing import Any
+
+
+class ExecutorHabilidades:
+
+    def executar(
+        self,
+        habilidade: dict[str, Any]
+    ) -> str:
+
+        nome = habilidade.get(
+            "nome",
+            "habilidade"
+        )
+
+        acoes = habilidade.get(
+            "acoes",
+            []
+        )
+
+        print()
+        print("=" * 50)
+        print(
+            f" JARVIS - HABILIDADE: {nome}"
+        )
+        print("=" * 50)
+
+        if not acoes:
+
+            return (
+                "A habilidade não possui ações."
+            )
+
+        for indice, acao in enumerate(
+            acoes,
+            start=1
+        ):
+
+            tipo = acao.get(
+                "tipo",
+                ""
+            )
+
+            valor = acao.get(
+                "valor",
+                ""
+            )
+
+            print(
+                f"[{indice}] {tipo}: {valor}"
+            )
+
+            try:
+
+                self._executar_acao(
+                    tipo,
+                    valor
+                )
+
+            except Exception as erro:
+
+                print(
+                    f"JARVIS: Erro na ação {indice}."
+                )
+
+                print(
+                    f"ERRO: {erro}"
+                )
+
+                return (
+                    f"A habilidade '{nome}' "
+                    f"falhou na ação {indice}: {erro}"
+                )
+
+        print("=" * 50)
+
+        return (
+            f"Habilidade '{nome}' executada "
+            f"com sucesso."
+        )
+
+
+    def _executar_acao(
+        self,
+        tipo: str,
+        valor: str
+    ) -> None:
+
+        tipo = tipo.lower().strip()
+
+
+        if tipo == "abrir_site":
+
+            webbrowser.open(
+                valor
+            )
+
+            return
+
+
+        if tipo == "abrir_programa":
+
+            subprocess.Popen(
+                valor,
+                shell=True
+            )
+
+            return
+
+
+        if tipo == "powershell":
+
+            print()
+            print(
+                "JARVIS: A habilidade solicitou "
+                "execução de PowerShell."
+            )
+
+            confirmacao = input(
+                "Digite SIM para confirmar: "
+            ).strip().lower()
+
+            if confirmacao != "sim":
+
+                print(
+                    "JARVIS: Ação cancelada."
+                )
+
+                return
+
+            subprocess.Popen(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    valor
+                ],
+                shell=False
+            )
+
+            return
+
+
+        if tipo == "esperar":
+
+            segundos = float(
+                valor
+            )
+
+            time.sleep(
+                segundos
+            )
+
+            return
+
+
+        if tipo == "falar":
+
+            print()
+            print(
+                "JARVIS:",
+                valor
+            )
+
+            return
+
+
+        raise ValueError(
+            f"Ação desconhecida: {tipo}"
+        )

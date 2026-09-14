@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>J.A.R.V.I.S — Personal Intelligence System</title>
+
+    <link rel="stylesheet" href="/interface/style.css">
+</head>
+
+<body>
+
+<div class="app">
+
+    <!-- =========================================================
+         TOPBAR
+    ========================================================== -->
+
+    <header class="topbar">
+
+        <div class="brand">
+
+            <div class="brand-logo">
+                J
+            </div>
+
+            <div class="brand-info">
+                <div class="brand-name">
+                    J.A.R.V.I.S
+                </div>
+
+                <div class="brand-subtitle">
+                    PERSONAL INTELLIGENCE SYSTEM
+                </div>
+            </div>
+
+        </div>
+
+
+        <div class="system-status">
+
+            <span id="connectionDot"
+                  class="connection-dot online">
+            </span>
+
+            <span id="connectionStatus">
+                ONLINE
+            </span>
+
+        </div>
+
+    </header>
+
+
+    <!-- =========================================================
+         MAIN
+    ========================================================== -->
+
+    <main class="main-grid">
+
+
+        <!-- =====================================================
+             LEFT
+        ====================================================== -->
+
+        <aside class="left-panel">
+
+            <!-- SISTEMA -->
+
+            <section class="panel">
+
+                <div class="panel-title">
+                    SISTEMA
+                </div>
+
+
+                <div class="system-item">
+                    <span>API CORE</span>
+
+                    <span id="apiStatus"
+                          class="status-value online-text">
+                        ONLINE
+                    </span>
+                </div>
+
+
+                <div class="system-item">
+                    <span>IA</span>
+
+                    <span id="iaStatus"
+                          class="status-value">
+                        ONLINE
+                    </span>
+                </div>
+
+
+                <div class="system-item">
+                    <span>VOZ</span>
+
+                    <span id="voiceStatus"
+                          class="status-value">
+                        PRONTA
+                    </span>
+                </div>
+
+
+                <div class="system-item">
+                    <span>VISÃO</span>
+
+                    <span id="visionStatus"
+                          class="status-value">
+                        STANDBY
+                    </span>
+                </div>
+
+            </section>
+
+
+            <!-- MEMÓRIA -->
+
+            <section class="panel memory-panel">
+
+                <div class="panel-title">
+                    MEMÓRIA
+                </div>
+
+
+                <div class="memory-core">
+
+                    <div class="memory-icon">
+                        🧠
+                    </div>
+
+                    <div>
+
+                        <div class="memory-title">
+                            MEMÓRIA ATIVA
+                        </div>
+
+                        <div id="memoryStatus">
+                            Núcleo conectado
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- AGENDA -->
+
+            <section class="panel agenda-panel">
+
+                <div class="panel-title">
+                    AGENDA
+                </div>
+
+
+                <div class="agenda-content">
+
+                    <div class="agenda-icon">
+                        ◷
+                    </div>
+
+                    <div>
+
+                        <div class="agenda-main">
+                            Nenhum compromisso
+                        </div>
+
+                        <div class="agenda-sub">
+                            Agenda sincronizada
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- MÓDULOS -->
+
+            <section class="panel modules-panel">
+
+                <div class="panel-title">
+                    MÓDULOS
+                </div>
+
+
+                <div class="module-item">
+                    <span>🧠 COGNIÇÃO</span>
+                    <span class="module-dot active"></span>
+                </div>
+
+                <div class="module-item">
+                    <span>💾 MEMÓRIA</span>
+                    <span class="module-dot active"></span>
+                </div>
+
+                <div class="module-item">
+                    <span>🎙 VOZ</span>
+                    <span class="module-dot active"></span>
+                </div>
+
+                <div class="module-item">
+                    <span>🌐 NAVEGADOR</span>
+                    <span class="module-dot active"></span>
+                </div>
+
+            </section>
+
+        </aside>
+
+
+
+        <!-- =====================================================
+             CENTER
+        ====================================================== -->
+
+        <section class="center-panel">
+
+
+            <!-- HEADER DO NÚCLEO -->
+
+            <div class="core-header">
+
+                <div>
+
+                    <div class="section-label">
+                        NÚCLEO CENTRAL
+                    </div>
+
+                    <div id="coreState"
+                         class="core-state">
+                        STANDBY
+                    </div>
+
+                </div>
+
+
+                <div class="core-indicator">
+
+                    <span class="pulse-dot"></span>
+
+                    <span id="coreMode">
+                        SISTEMA PRONTO
+                    </span>
+
+                </div>
+
+            </div>
+
+
+
+            <!-- NÚCLEO NEURAL -->
+
+            <div class="neural-area">
+
+                <canvas id="neuralCanvas"></canvas>
+
+
+                <div id="neuralCore"
+                     class="neural-core idle">
+
+                    <div class="core-ring ring-1"></div>
+                    <div class="core-ring ring-2"></div>
+                    <div class="core-ring ring-3"></div>
+                    <div class="core-ring ring-4"></div>
+
+                    <div class="core-glow"></div>
+
+                    <div class="core-symbol">
+                        J
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- STATUS -->
+
+            <div class="core-description">
+
+                <div id="coreDescription">
+                    Aguardando comando, chefe.
+                </div>
+
+            </div>
+
+
+            <!-- BARRA DE PROCESSAMENTO -->
+
+            <div class="activity-progress-container">
+
+                <div id="activityProgress"
+                     class="activity-progress">
+                </div>
+
+            </div>
+
+
+
+            <!-- =================================================
+                 AÇÕES RÁPIDAS
+            ================================================== -->
+
+            <section class="quick-actions">
+
+                <div class="section-label">
+                    AÇÕES RÁPIDAS
+                </div>
+
+
+                <div class="quick-grid">
+
+                    <button class="quick-button"
+                            data-command="abrir bloco de notas">
+                        <span class="quick-icon">▣</span>
+                        BLOCO DE NOTAS
+                    </button>
+
+
+                    <button class="quick-button"
+                            data-command="abrir calculadora">
+                        <span class="quick-icon">◫</span>
+                        CALCULADORA
+                    </button>
+
+
+                    <button class="quick-button"
+                            data-command="pesquisar no navegador">
+                        <span class="quick-icon">◉</span>
+                        PESQUISAR
+                    </button>
+
+
+                    <button class="quick-button"
+                            data-command="mostrar minha agenda">
+                        <span class="quick-icon">◷</span>
+                        AGENDA
+                    </button>
+
+                </div>
+
+            </section>
+
+
+
+            <!-- =================================================
+                 COMANDO
+            ================================================== -->
+
+            <section class="command-section">
+
+                <div class="section-label">
+                    COMANDO
+                </div>
+
+
+                <div id="commandBox"
+                     class="command-box">
+
+
+                    <textarea
+                        id="commandInput"
+                        rows="1"
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="Digite um comando para J.A.R.V.I.S..."
+                    ></textarea>
+
+
+                    <div class="command-actions">
+
+                        <button
+                            id="voiceButton"
+                            class="command-button voice-button"
+                            type="button"
+                            title="Ativar voz">
+                            🎙
+                        </button>
+
+
+                        <button
+                            id="sendButton"
+                            class="command-button send-button"
+                            type="button"
+                            title="Enviar comando">
+                            ➤
+                        </button>
+
+                    </div>
+
+                </div>
+
+
+                <div class="command-footer">
+
+                    <span>
+                        ENTER enviar
+                    </span>
+
+                    <span>
+                        SHIFT + ENTER nova linha
+                    </span>
+
+                    <span id="inputStatus">
+                        PRONTO
+                    </span>
+
+                </div>
+
+            </section>
+
+
+
+            <!-- =================================================
+                 TELEMETRIA
+            ================================================== -->
+
+            <section class="telemetry">
+
+                <div class="section-label">
+                    TELEMETRIA LIVE
+                </div>
+
+
+                <div class="telemetry-grid">
+
+
+                    <!-- CPU -->
+
+                    <div class="telemetry-item">
+
+                        <div class="telemetry-head">
+
+                            <span>CPU</span>
+
+                            <span id="cpuValue">
+                                0%
+                            </span>
+
+                        </div>
+
+                        <div class="telemetry-bar">
+
+                            <div id="cpuBar"
+                                 class="telemetry-fill">
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- RAM -->
+
+                    <div class="telemetry-item">
+
+                        <div class="telemetry-head">
+
+                            <span>RAM</span>
+
+                            <span id="ramValue">
+                                0%
+                            </span>
+
+                        </div>
+
+                        <div class="telemetry-bar">
+
+                            <div id="ramBar"
+                                 class="telemetry-fill">
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- GPU -->
+
+                    <div class="telemetry-item">
+
+                        <div class="telemetry-head">
+
+                            <span>GPU</span>
+
+                            <span id="gpuValue">
+                                --%
+                            </span>
+
+                        </div>
+
+                        <div class="telemetry-bar">
+
+                            <div id="gpuBar"
+                                 class="telemetry-fill">
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        </section>
+
+
+
+        <!-- =====================================================
+             RIGHT
+        ====================================================== -->
+
+        <aside class="right-panel">
+
+
+            <!-- CONVERSA -->
+
+            <section class="panel conversation-panel">
+
+                <div class="panel-header">
+
+                    <div class="panel-title">
+                        CONVERSA
+                    </div>
+
+                    <div class="chat-status">
+                        ● LIVE
+                    </div>
+
+                </div>
+
+
+                <div id="chat"
+                     class="chat">
+
+                    <div class="chat-message jarvis">
+
+                        <div class="chat-author">
+                            J.A.R.V.I.S
+                        </div>
+
+                        <div class="chat-text">
+                            Núcleo inicializado.
+                            Aguardando comando, chefe.
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+
+            <!-- ATIVIDADE -->
+
+            <section class="panel activity-panel">
+
+                <div class="panel-title">
+                    ATIVIDADE
+                </div>
+
+
+                <div id="activityLog"
+                     class="activity-log">
+
+                    <div class="activity-line">
+
+                        <span class="activity-time">
+                            --:--:--
+                        </span>
+
+                        <span>
+                            Núcleo inicializado
+                        </span>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        </aside>
+
+    </main>
+
+
+
+    <!-- =========================================================
+         FOOTER
+    ========================================================== -->
+
+    <footer class="footer">
+
+        <div class="footer-brand">
+            J.A.R.V.I.S
+        </div>
+
+        <div>
+            LOCAL CORE
+        </div>
+
+        <div>
+            UPTIME
+            <span id="uptime">
+                00:00:00
+            </span>
+        </div>
+
+        <div>
+            v1.1
+        </div>
+
+    </footer>
+
+</div>
+
+
+<script src="/interface/app.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,81 @@
+﻿# Segredos
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+**/secrets/
+**/*secret*
+**/*credentials*
+**/credenciais.py
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Dados locais
+**/dados/
+**/memoria/
+**/memorias/
+**/chromadb/
+**/chroma_db/
+**/*chroma*
+**/*identidade*
+**/*historico*
+
+# Navegadores/perfis
+**/browser_profile/
+**/browser_profile_*/
+**/dados_chrome/
+**/dados_chromium/
+**/chrome_jarvis/
+
+# Áudio e imagens locais
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Backups
+**/backup_*/
+**/*backup*
+**/*.bak
+**/*.old
+**/*.backup*
+**/*.bak*
+**/*.old*
+
+# Temporários
+*.log
+logs/
+cache/
+.cache/
+*.tmp
+*.temp
+
+# Arquivos específicos antigos/não pertencentes ao Cloud
+**/*qwen*
+**/*Qwen*
+**/diagnostico_conexao_qwen.txt
+**/diagnostico_qwen_porta_1234.txt
+**/rastreamento_qwen.txt
+
+# IDE/sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Driver local pesado
+JARVIS_BASE/voz_neural/driver_acer_nvidia.zip
+
+# Banco local do IA Router
+IA_ROUTER/router.db

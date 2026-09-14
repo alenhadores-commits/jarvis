@@ -1,0 +1,304 @@
+﻿IA ROUTER LOCAL — GUIA RÁPIDA
+================================
+
+PASTA DO PROJETO
+C:\Users\almei\IA_ROUTER
+
+O QUE É
+-------
+Um roteador local de APIs de IA. Ele funciona como uma API compatível com o padrão OpenAI e escolhe automaticamente entre os provedores configurados.
+
+SERVIDOR
+--------
+Host: 127.0.0.1
+Porta: 8765
+API base: http://127.0.0.1:8765/v1
+
+COMO INICIAR
+------------
+Abra o PowerShell e execute:
+
+cd C:\Users\almei\IA_ROUTER
+python -m uvicorn api_router:app --host 127.0.0.1 --port 8765
+
+Para verificar se está online:
+
+Invoke-RestMethod http://127.0.0.1:8765/status | ConvertTo-Json -Depth 10
+
+
+PROVEDORES CONFIGURADOS
+-----------------------
+
+1. Groq
+   Modelo: openai/gpt-oss-120b
+   Prioridade: 10
+
+2. Gemini
+   Modelo: gemini-3.8-flash
+   Prioridade: 30
+
+3. OpenRouter
+   Modelo: nvidia/nemotron-3.5-lightning:free
+   Prioridade: 40
+
+4. NVIDIA
+   Modelo: openai/gpt-oss-20b
+   Prioridade: 60
+
+5. HuggingFace
+   Modelo: deepseek-ai/DeepSeek-V3-0324
+   Prioridade: 70
+
+6. Cohere
+   Modelo: command-a-plus-05-2026
+   Prioridade: 90
+
+A seleção automática usa prioridade e estado/saúde do provedor.
+
+Se um provedor falhar, o Router pode tentar o próximo.
+
+
+USO NORMAL
+----------
+
+Endpoint principal:
+
+POST http://127.0.0.1:8765/v1/chat/completions
+
+Exemplo PowerShell:
+
+$body = @{
+    messages = @(
+        @{
+            role = "user"
+            content = "Responda apenas OK."
+        }
+    )
+    temperature = 0
+    max_tokens = 16
+} | ConvertTo-Json -Depth 8
+
+Invoke-RestMethod `
+    -Uri "http://127.0.0.1:8765/v1/chat/completions" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $body | ConvertTo-Json -Depth 10
+
+A resposta informa:
+- modelo
+- resposta
+- tokens
+- provedor utilizado
+
+
+ENDPOINTS IMPORTANTES
+---------------------
+
+/status
+    Estado geral do Router.
+
+/providers
+    Provedores configurados e estado.
+
+/usage
+    Uso acumulado, chamadas, erros e tokens.
+
+/quota
+    Informações de quota que o Router conseguiu descobrir.
+
+/v1/models
+    Modelos expostos pelo Router.
+
+/outbound
+    Informações sobre saídas/requisições externas.
+
+/ws
+    WebSocket do Router.
+    A base já existe, mas o streaming completo ainda não foi finalizado.
+
+
+CONTABILIZAÇÃO DE TOKENS
+------------------------
+
+O Router registra:
+
+- prompt_tokens
+- output/completion_tokens
+- total_tokens
+- chamadas
+- erros
+- rate limits
+- latência
+- remaining requests
+- remaining tokens
+- informações de quota quando disponíveis
+
+IMPORTANTE:
+
+reasoning_tokens é um detalhamento de completion_tokens.
+
+Ele NÃO deve ser somado novamente ao output.
+
+Isso evita dupla contagem.
+
+
+QUOTA
+-----
+
+O endpoint /quota consulta o que estiver disponível nas APIs/provedores.
+
+Se um provedor não informar o limite real, o Router mantém o valor como desconhecido.
+
+NUNCA inventar limites de quota.
+
+
+ALERTA DE QUOTA
+---------------
+
+ROUTER_QUOTA_ALERT_PERCENT = 10%
+
+O Router alerta quando uma quota conhecida chega a 10% ou menos.
+
+O alerta é limpo quando volta acima de 15%.
+
+
+BANCO DE DADOS
+--------------
+
+Arquivo:
+
+router.db
+
+Usado para guardar:
+
+- uso
+- chamadas
+- tokens
+- erros
+- rate limits
+- cooldowns
+- latência
+- informações de quota
+
+
+ESTADO ATUAL
+------------
+
+PRONTO:
+
+- FastAPI
+- Uvicorn
+- API local OpenAI-compatible
+- Router local em 127.0.0.1:8765
+- Seleção automática de provedor
+- Fallback
+- SQLite de uso
+- Controle de cooldown
+- Controle de rate limit
+- Contagem de tokens
+- Prompt tokens
+- Output tokens
+- Total tokens
+- Controle de reasoning_tokens sem dupla contagem
+- Consulta de quota
+- Consulta de uso
+- Consulta de status
+- Consulta de modelos
+- Groq funcionando através do Router
+- SDK Python
+- WebSocket básico
+
+
+AINDA FALTA
+-----------
+
+1. Testar individualmente os outros 5 provedores através do Router.
+
+2. Implementar/validar seleção manual de provedor.
+
+   Exemplo futuro:
+
+   provider = "groq"
+
+3. Fazer testes reais de fallback.
+
+4. Finalizar streaming WebSocket.
+
+5. Integrar definitivamente com o JARVIS.
+
+6. Criar uma bateria final de testes.
+
+
+SDK PYTHON
+----------
+
+Arquivo:
+
+ia_router_sdk.py
+
+Permite utilizar o Router através de Python.
+
+
+ARQUIVOS PRINCIPAIS
+-------------------
+
+api_router.py
+    Servidor e lógica principal do Router.
+
+api_manager.py
+    Gerenciamento, testes e consulta de quota dos provedores.
+
+ia_router_sdk.py
+    SDK Python.
+
+router.db
+    Banco SQLite de uso.
+
+pyproject.toml
+    Configuração do pacote.
+
+
+COMO PARAR O SERVIDOR
+---------------------
+
+No PowerShell onde o servidor está rodando:
+
+Ctrl+C
+
+
+COMO SABER SE ESTÁ FUNCIONANDO
+------------------------------
+
+Execute:
+
+Invoke-RestMethod http://127.0.0.1:8765/status | ConvertTo-Json -Depth 10
+
+Se retornar o estado do Router, ele está online.
+
+
+RESUMO EM UMA FRASE
+-------------------
+
+IA_ROUTER é a camada local que recebe uma chamada de IA, escolhe um provedor disponível, executa a requisição, registra uso/tokens/quota e pode fazer fallback para outro provedor.
+
+
+OBJETIVO FINAL
+--------------
+
+Transformar o IA_ROUTER na camada central de IA do JARVIS.
+
+O JARVIS poderá conversar com:
+
+JARVIS
+   ↓
+IA_ROUTER LOCAL
+   ↓
+Groq / Gemini / OpenRouter / NVIDIA / HuggingFace / Cohere
+   ↓
+Resposta
+
+
+ÚLTIMA ATUALIZAÇÃO
+------------------
+
+2026-09-12

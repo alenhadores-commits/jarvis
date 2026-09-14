@@ -1,0 +1,1868 @@
+﻿# -*- coding: utf-8 -*-
+
+"""
+J.A.R.V.I.S â€” NÃšCLEO OPERACIONAL
+
+Loop principal:
+recebe comando (voz ou texto)
+        â†“
+Orquestrador
+        â†“
+Executor
+        â†“
+resultado
+
+O navegador do ChatGPT é iniciado junto com o JARVIS
+e permanece aberto durante toda a execução.
+
+A sessão do ChatGPT é persistente através do perfil:
+
+C:\\Users\\almei\\JARVIS\\browser_profile
+
+As credenciais, quando configuradas, são armazenadas
+pelo Windows Credential Manager através do keyring.
+
+A senha NÃƒO fica armazenada neste arquivo.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import traceback
+
+from playwright.sync_api import (
+    sync_playwright,
+    BrowserContext,
+    Page,
+)
+
+from ai.orquestrador import Orquestrador
+from ai.executor import Executor
+from voz.reconhecimento import ouvir
+
+from credenciais import (
+    obter_email,
+    obter_senha,
+    garantir_credenciais,
+)
+from habilidades.gerenciador import (
+    GerenciadorHabilidades,
+)
+
+from habilidades.executor import (
+    ExecutorHabilidades,
+)
+
+
+# ================================================================
+# CONFIGURAÃ‡ÃƒO
+# ================================================================
+
+COMANDOS_SAIDA = {
+    "sair",
+    "fechar",
+    "encerrar",
+}
+
+MAX_ERROS_SEGUIDOS = 5
+
+
+# ================================================================
+# PERFIL PERSISTENTE DO CHATGPT
+# ================================================================
+
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+
+PERFIL_NAVEGADOR = os.path.join(
+    BASE_DIR,
+    "browser_profile_test"
+)
+
+URL_CHATGPT = "https://chatgpt.com/"
+
+URL_LOGIN = "https://chatgpt.com/auth/login"
+
+
+# ================================================================
+# EXIBIÃ‡ÃƒO DE PÁGINA
+# ================================================================
+
+def mostrar_pagina(resultado: dict) -> None:
+
+    print("\n" + "=" * 50)
+    print(" JARVIS - ANÁLISE DA PÁGINA")
+    print("=" * 50)
+
+    print("\nURL:")
+    print(resultado.get("url", "â€”"))
+
+    print("\nTÍTULO:")
+    print(resultado.get("titulo", "â€”"))
+
+    links = resultado.get("links", [])
+
+    print("\nLINKS:", len(links))
+
+    for link in links:
+
+        print(
+            f"  Texto: {link.get('texto', '')}"
+        )
+
+        print(
+            f"  Href:  {link.get('href', '')}"
+        )
+
+    botoes = resultado.get("botoes", [])
+
+    print("\nBOTÃ•ES:", len(botoes))
+
+    for botao in botoes:
+
+        print(
+            f"  Texto: {botao.get('texto', '')}"
+        )
+
+        print(
+            f"  Tipo:  {botao.get('tipo', '')}"
+        )
+
+    campos = resultado.get("campos", [])
+
+    print("\nCAMPOS:", len(campos))
+
+    for campo in campos:
+
+        print(
+            f"  Tag:         {campo.get('tag', '')}"
+        )
+
+        print(
+            f"  Tipo:        {campo.get('tipo', '')}"
+        )
+
+        print(
+            f"  Nome:        {campo.get('nome', '')}"
+        )
+
+        print(
+            f"  ID:          {campo.get('id', '')}"
+        )
+
+        print(
+            f"  Placeholder: {campo.get('placeholder', '')}"
+        )
+
+    scripts = resultado.get("scripts", [])
+
+    print(
+        "\nSCRIPTS:",
+        len(scripts)
+    )
+
+    print("\nTEXTO DA PÁGINA:")
+    print("-" * 50)
+
+    texto = resultado.get("texto") or ""
+
+    print(texto[:3000])
+
+    print("=" * 50)
+
+
+# ================================================================
+# ENTRADA DO USUÁRIO
+# ================================================================
+
+def obter_comando() -> str:
+
+    print()
+    print("=" * 50)
+    print(" JARVIS - ENTRADA")
+    print("=" * 50)
+    print("[1] Voz")
+    print("[2] Texto")
+    print("[3] Memórias permanentes")
+    print("[4] Gerenciar comandos")
+    print("[5] Sair")
+    print()
+
+    try:
+
+        opcao = input(
+            "Escolha: "
+        ).strip()
+
+    except EOFError:
+
+        return "sair"
+
+    if opcao == "1":
+
+        print(
+            "JARVIS: Preparando microfone..."
+        )
+
+        try:
+
+            comando = ouvir()
+
+            return (
+                comando or ""
+            ).strip()
+
+        except Exception as erro:
+
+            print(
+                "JARVIS: Não consegui usar "
+                "o microfone."
+            )
+
+            print(
+                f"ERRO: {erro}"
+            )
+
+            return ""
+
+    if opcao == "2":
+
+        try:
+
+            return input(
+                "Você: "
+            ).strip()
+
+        except EOFError:
+
+            return "sair"
+
+    if opcao == "3":
+
+        from memorias_permanentes import menu_memorias
+
+        menu_memorias()
+
+        return ""
+
+    if opcao == "5":
+
+        return "sair"
+
+    if opcao == "4":
+
+        return "__ENSINAR_COMANDO__"
+
+    print(
+        "JARVIS: Opção inválida."
+    )
+
+    return ""
+
+
+# ================================================================
+# GERENCIADOR DO NAVEGADOR
+# ================================================================
+
+class NavegadorManager:
+
+    def __init__(
+        self,
+        playwright,
+        headless: bool = False,
+    ):
+
+        self._p = playwright
+
+        self._headless = headless
+
+        self.contexto: BrowserContext | None = None
+
+        self.pagina: Page | None = None
+
+        self._iniciar_navegador()
+
+        self._criar_pagina()
+
+
+
+    # ============================================================
+    # INICIAR NAVEGADOR
+    # ============================================================
+
+    def _iniciar_navegador(self) -> None:
+
+        print(
+            "JARVIS: Inicializando navegador..."
+        )
+
+        print(
+            "JARVIS: Perfil:",
+            PERFIL_NAVEGADOR
+        )
+
+        os.makedirs(
+            PERFIL_NAVEGADOR,
+            exist_ok=True
+        )
+
+        self.contexto = (
+            self._p.chromium.launch_persistent_context(
+                user_data_dir=PERFIL_NAVEGADOR,
+                headless=self._headless,
+                args=[
+                    "--start-minimized",
+                ],
+            )
+        )
+
+        print(
+            "JARVIS: Navegador persistente iniciado."
+        )
+
+
+    # ============================================================
+    # CRIAR / REUTILIZAR PÁGINA
+    # ============================================================
+
+    def _criar_pagina(self) -> None:
+
+        if self.contexto is None:
+
+            raise RuntimeError(
+                "Contexto do navegador não está disponível."
+            )
+
+        paginas = [
+            pagina
+            for pagina in self.contexto.pages
+            if not pagina.is_closed()
+        ]
+
+        # ========================================================
+        # PROCURAR CHATGPT JÁ ABERTO
+        # ========================================================
+
+        for pagina in paginas:
+
+            try:
+
+                url = pagina.url.lower()
+
+            except Exception:
+
+                continue
+
+            if "chatgpt.com" in url:
+
+                self.pagina = pagina
+
+                print(
+                    "JARVIS: Página do ChatGPT reutilizada:",
+                    pagina.url
+                )
+
+                return
+
+        # ========================================================
+        # REUTILIZAR UMA PÁGINA EXISTENTE
+        # ========================================================
+
+        if paginas:
+
+            self.pagina = paginas[0]
+
+            print(
+                "JARVIS: Página existente reutilizada:",
+                self.pagina.url
+            )
+
+            try:
+
+                self.pagina.goto(
+                    "https://chatgpt.com/",
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                )
+
+                print(
+                    "JARVIS: ChatGPT aberto na página existente."
+                )
+
+            except Exception as erro:
+
+                print(
+                    "JARVIS: Não consegui abrir o ChatGPT."
+                )
+
+                print(
+                    f"ERRO: {erro}"
+                )
+
+            return
+
+        # ========================================================
+        # CRIAR PÁGINA NOVA
+        # ========================================================
+
+        self.pagina = (
+            self.contexto.new_page()
+        )
+
+        try:
+
+            self.pagina.goto(
+                "https://chatgpt.com/",
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+
+            print(
+                "JARVIS: Página do ChatGPT criada."
+            )
+
+        except Exception as erro:
+
+            print(
+                "JARVIS: Não consegui abrir o ChatGPT."
+            )
+
+            print(
+                f"ERRO: {erro}"
+            )
+
+
+
+    # ============================================================
+    # VERIFICAR SE ESTÁ LOGADO
+    # ============================================================
+
+    def esta_logado(self) -> bool:
+
+        if self.pagina is None:
+
+            return False
+
+        try:
+
+            self.pagina.wait_for_load_state(
+                "domcontentloaded",
+                timeout=10000,
+            )
+
+        except Exception:
+
+            pass
+
+        url = self.pagina.url.lower()
+
+        if (
+            "/auth/" in url
+            or "/login" in url
+        ):
+
+            return False
+
+        try:
+
+            campo = self.pagina.locator(
+                "textarea[placeholder='Pergunte ao ChatGPT']"
+            )
+
+            if campo.count() > 0:
+
+                if campo.first.is_visible(
+                    timeout=3000
+                ):
+
+                    return True
+
+        except Exception:
+
+            pass
+
+        try:
+
+            campo = self.pagina.locator(
+                "textarea"
+            )
+
+            if campo.count() > 0:
+
+                if campo.first.is_visible(
+                    timeout=3000
+                ):
+
+                    return True
+
+        except Exception:
+
+            pass
+
+        return False
+
+
+    # ============================================================
+    # LOCALIZAR BOTÃƒO DE LOGIN
+    # ============================================================
+
+    def _botao_login(self):
+
+        if self.pagina is None:
+
+            return None
+
+        seletores = [
+            "button:has-text('Log in')",
+            "button:has-text('Log In')",
+            "button:has-text('Entrar')",
+            "a:has-text('Log in')",
+            "a:has-text('Entrar')",
+        ]
+
+        for seletor in seletores:
+
+            try:
+
+                locator = self.pagina.locator(
+                    seletor
+                )
+
+                if locator.count() > 0:
+
+                    if locator.first.is_visible(
+                        timeout=2000
+                    ):
+
+                        return locator.first
+
+            except Exception:
+
+                continue
+
+        return None
+
+
+    # ============================================================
+    # TENTAR LOGIN AUTOMÁTICO
+    # ============================================================
+
+    def _login_automatico(self) -> bool:
+
+        if self.pagina is None:
+
+            return False
+
+        email = obter_email()
+
+        senha = obter_senha()
+
+        if not email or not senha:
+
+            print(
+                "JARVIS: Credenciais não configuradas."
+            )
+
+            return False
+
+        print(
+            "JARVIS: Tentando autenticação automática..."
+        )
+
+        try:
+
+            self.pagina.goto(
+                URL_LOGIN,
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+
+        except Exception as erro:
+
+            print(
+                "JARVIS: Erro ao abrir autenticação."
+            )
+
+            print(
+                f"ERRO: {erro}"
+            )
+
+            return False
+
+        try:
+
+            self.pagina.wait_for_timeout(
+                2000
+            )
+
+            # ----------------------------------------------------
+            # CAMPO DE E-MAIL
+            # ----------------------------------------------------
+
+            seletores_email = [
+                "input[type='email']",
+                "input[name='email']",
+                "input[autocomplete='username']",
+            ]
+
+            campo_email = None
+
+            for seletor in seletores_email:
+
+                locator = self.pagina.locator(
+                    seletor
+                )
+
+                if locator.count() > 0:
+
+                    try:
+
+                        if locator.first.is_visible(
+                            timeout=1500
+                        ):
+
+                            campo_email = locator.first
+
+                            break
+
+                    except Exception:
+
+                        continue
+
+            if campo_email is not None:
+
+                campo_email.fill(email)
+
+                print(
+                    "JARVIS: E-mail preenchido."
+                )
+
+                # ------------------------------------------------
+                # CONTINUAR
+                # ------------------------------------------------
+
+                botoes = [
+                    "button:has-text('Continue')",
+                    "button:has-text('Continuar')",
+                    "button[type='submit']",
+                ]
+
+                clicou = False
+
+                for seletor in botoes:
+
+                    try:
+
+                        botao = self.pagina.locator(
+                            seletor
+                        )
+
+                        if botao.count() > 0:
+
+                            if botao.first.is_visible(
+                                timeout=1500
+                            ):
+
+                                botao.first.click()
+
+                                clicou = True
+
+                                break
+
+                    except Exception:
+
+                        continue
+
+                if clicou:
+
+                    self.pagina.wait_for_timeout(
+                        1500
+                    )
+
+            # ----------------------------------------------------
+            # CAMPO DE SENHA
+            # ----------------------------------------------------
+
+            seletores_senha = [
+                "input[type='password']",
+                "input[name='password']",
+                "input[autocomplete='current-password']",
+            ]
+
+            campo_senha = None
+
+            for seletor in seletores_senha:
+
+                locator = self.pagina.locator(
+                    seletor
+                )
+
+                if locator.count() > 0:
+
+                    try:
+
+                        if locator.first.is_visible(
+                            timeout=2000
+                        ):
+
+                            campo_senha = locator.first
+
+                            break
+
+                    except Exception:
+
+                        continue
+
+            if campo_senha is None:
+
+                print(
+                    "JARVIS: A etapa de senha "
+                    "não apareceu automaticamente."
+                )
+
+                print(
+                    "JARVIS: Verifique o navegador."
+                )
+
+                return False
+
+            campo_senha.fill(senha)
+
+            print(
+                "JARVIS: Senha preenchida."
+            )
+
+            # ----------------------------------------------------
+            # BOTÃƒO FINAL
+            # ----------------------------------------------------
+
+            botoes_final = [
+                "button[type='submit']",
+                "button:has-text('Continue')",
+                "button:has-text('Continuar')",
+                "button:has-text('Log in')",
+                "button:has-text('Entrar')",
+            ]
+
+            clicou_final = False
+
+            for seletor in botoes_final:
+
+                try:
+
+                    botao = self.pagina.locator(
+                        seletor
+                    )
+
+                    if botao.count() > 0:
+
+                        if botao.first.is_visible(
+                            timeout=1500
+                        ):
+
+                            botao.first.click()
+
+                            clicou_final = True
+
+                            break
+
+                except Exception:
+
+                    continue
+
+            if not clicou_final:
+
+                print(
+                    "JARVIS: Não encontrei o "
+                    "botão final de autenticação."
+                )
+
+                return False
+
+            print(
+                "JARVIS: Autenticação enviada."
+            )
+
+            self.pagina.wait_for_timeout(
+                5000
+            )
+
+            # ----------------------------------------------------
+            # VERIFICAÃ‡ÃƒO FINAL
+            # ----------------------------------------------------
+
+            if self.esta_logado():
+
+                print(
+                    "JARVIS: CHATGPT AUTENTICADO."
+                )
+
+                return True
+
+            print(
+                "JARVIS: Autenticação adicional "
+                "pode ser necessária."
+            )
+
+            print(
+                "JARVIS: Se aparecer 2FA, CAPTCHA "
+                "ou passkey, conclua manualmente."
+            )
+
+            return False
+
+        except Exception as erro:
+
+            print(
+                "JARVIS: Não foi possível concluir "
+                "o login automático."
+            )
+
+            print(
+                f"ERRO: {erro}"
+            )
+
+            return False
+
+
+    # ============================================================
+    # PREPARAR CHATGPT
+    # ============================================================
+
+    def _preparar_chatgpt(self) -> None:
+
+        if self.pagina is None:
+
+            raise RuntimeError(
+                "Página do navegador não está disponível."
+            )
+
+        print(
+            "JARVIS: Preparando ChatGPT..."
+        )
+
+        try:
+
+            self.pagina.goto(
+                URL_CHATGPT,
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+
+            self.pagina.wait_for_timeout(
+                2000
+            )
+
+        except Exception as erro:
+
+            print(
+                "JARVIS: Não foi possível carregar "
+                "o ChatGPT agora."
+            )
+
+            print(
+                f"ERRO: {erro}"
+            )
+
+            return
+
+        # --------------------------------------------------------
+        # JÁ ESTÁ LOGADO
+        # --------------------------------------------------------
+
+        if self.esta_logado():
+
+            print(
+                "JARVIS: CHATGPT: ONLINE."
+            )
+
+            print(
+                "JARVIS: SESSÃƒO: AUTENTICADA."
+            )
+
+            print(
+                "JARVIS: Navegador permanece "
+                "ativo em segundo plano."
+            )
+
+            return
+
+        # --------------------------------------------------------
+        # NÃƒO ESTÁ LOGADO
+        # --------------------------------------------------------
+
+        print(
+            "JARVIS: CHATGPT não está autenticado."
+        )
+
+        if not garantir_credenciais():
+
+            print(
+                "JARVIS: Nenhuma credencial disponível."
+            )
+
+            print(
+                "JARVIS: O login deverá ser "
+                "feito manualmente."
+            )
+
+            return
+
+        # --------------------------------------------------------
+        # LOGIN AUTOMÁTICO
+        # --------------------------------------------------------
+
+        if self._login_automatico():
+
+            return
+
+        # --------------------------------------------------------
+        # AGUARDAR LOGIN MANUAL
+        # --------------------------------------------------------
+
+        print()
+        print("=" * 50)
+        print(" JARVIS - AUTENTICAÃ‡ÃƒO")
+        print("=" * 50)
+        print(
+            "JARVIS: Conclua a autenticação "
+            "na janela do navegador."
+        )
+        print(
+            "JARVIS: Aguardando login..."
+        )
+
+        for _ in range(60):
+
+            try:
+
+                if self.esta_logado():
+
+                    print(
+                        "JARVIS: LOGIN CONFIRMADO."
+                    )
+
+                    print(
+                        "JARVIS: CHATGPT ONLINE."
+                    )
+
+                    return
+
+            except Exception:
+
+                pass
+
+            self.pagina.wait_for_timeout(
+                1000
+            )
+
+        print(
+            "JARVIS: Tempo de autenticação "
+            "esgotado."
+        )
+
+
+    # ============================================================
+    # GARANTIR PÁGINA
+    # ============================================================
+
+    def garantir_pagina(self) -> Page:
+
+        contexto_ok = (
+            self.contexto is not None
+        )
+
+        pagina_ok = (
+            self.pagina is not None
+            and not self.pagina.is_closed()
+        )
+
+        if contexto_ok and pagina_ok:
+
+            return self.pagina
+
+        print(
+            "JARVIS: Página atual inválida."
+        )
+
+        print(
+            "JARVIS: Tentando recuperar navegador..."
+        )
+
+        try:
+
+            if self.contexto is not None:
+
+                paginas = self.contexto.pages
+
+                for pagina in paginas:
+
+                    if not pagina.is_closed():
+
+                        self.pagina = pagina
+
+                        print(
+                            "JARVIS: Página recuperada."
+                        )
+
+                        return pagina
+
+        except Exception:
+
+            pass
+
+        self._fechar_contexto_silencioso()
+
+        self._iniciar_navegador()
+
+        self._criar_pagina()
+
+        self._preparar_chatgpt()
+
+        if self.pagina is None:
+
+            raise RuntimeError(
+                "Não foi possível recuperar "
+                "a página do ChatGPT."
+            )
+
+        return self.pagina
+
+
+    # ============================================================
+    # FECHAR CONTEXTO
+    # ============================================================
+
+    def _fechar_contexto_silencioso(self) -> None:
+
+        if self.contexto is not None:
+
+            try:
+
+                self.contexto.close()
+
+            except Exception:
+
+                pass
+
+        self.contexto = None
+
+        self.pagina = None
+
+
+    # ============================================================
+    # FECHAR TUDO
+    # ============================================================
+
+    def fechar(self) -> None:
+
+        print(
+            "JARVIS: Encerrando navegador..."
+        )
+
+        self._fechar_contexto_silencioso()
+
+        print(
+            "JARVIS: Navegador encerrado."
+        )
+
+
+
+# ================================================================
+# CENTRO DE ENSINO
+# ================================================================
+
+
+def listar_comandos(
+    gerenciador: GerenciadorHabilidades
+) -> None:
+
+    habilidades = gerenciador.listar()
+
+    print()
+    print("=" * 50)
+    print(" JARVIS - COMANDOS CADASTRADOS")
+    print("=" * 50)
+
+    if not habilidades:
+
+        print()
+        print("JARVIS: Nenhum comando ensinado.")
+
+        return
+
+    print()
+
+    for indice, habilidade in enumerate(
+        habilidades,
+        start=1
+    ):
+
+        print(
+            f"[{indice}] {habilidade.get('nome', 'Sem nome')}"
+        )
+
+        print(
+            "    Gatilhos:",
+            ", ".join(
+                habilidade.get(
+                    "gatilhos",
+                    []
+                )
+            )
+        )
+
+        print(
+            "    Ações:",
+            len(
+                habilidade.get(
+                    "acoes",
+                    []
+                )
+            )
+        )
+
+        print()
+
+
+def editar_comando(
+    gerenciador: GerenciadorHabilidades
+) -> None:
+
+    habilidades = gerenciador.listar()
+
+    if not habilidades:
+
+        print()
+        print("JARVIS: Nenhum comando para editar.")
+
+        return
+
+    print()
+    print("=" * 50)
+    print(" JARVIS - EDITAR COMANDO")
+    print("=" * 50)
+
+    print()
+
+    for indice, habilidade in enumerate(
+        habilidades,
+        start=1
+    ):
+
+        print(
+            f"[{indice}] {habilidade.get('nome', 'Sem nome')}"
+        )
+
+    print()
+
+    try:
+
+        escolha = int(
+            input(
+                "Número do comando: "
+            ).strip()
+        ) - 1
+
+    except ValueError:
+
+        print(
+            "JARVIS: Número inválido."
+        )
+
+        return
+
+    if escolha < 0 or escolha >= len(habilidades):
+
+        print(
+            "JARVIS: Comando inexistente."
+        )
+
+        return
+
+    atual = habilidades[escolha]
+
+    nome_antigo = atual.get(
+        "nome",
+        ""
+    )
+
+    print()
+    print(
+        f"Nome atual: {nome_antigo}"
+    )
+
+    novo_nome = input(
+        "Novo nome (Enter mantém): "
+    ).strip()
+
+    if not novo_nome:
+
+        novo_nome = nome_antigo
+
+    print()
+    print(
+        "Gatilhos atuais:",
+        ", ".join(
+            atual.get(
+                "gatilhos",
+                []
+            )
+        )
+    )
+
+    entrada = input(
+        "Novos gatilhos separados por | (Enter mantém): "
+    ).strip()
+
+    if entrada:
+
+        gatilhos = [
+            item.strip()
+            for item in entrada.split("|")
+            if item.strip()
+        ]
+
+    else:
+
+        gatilhos = atual.get(
+            "gatilhos",
+            []
+        )
+
+    nova_habilidade = {
+        "nome": novo_nome,
+        "gatilhos": gatilhos,
+        "acoes": atual.get(
+            "acoes",
+            []
+        ),
+        "ativa": atual.get(
+            "ativa",
+            True
+        ),
+    }
+
+    if gerenciador.atualizar(
+        nome_antigo,
+        nova_habilidade
+    ):
+
+        print()
+        print(
+            "JARVIS: Comando atualizado."
+        )
+
+    else:
+
+        print()
+        print(
+            "JARVIS: Não foi possível atualizar."
+        )
+
+
+def apagar_comando(
+    gerenciador: GerenciadorHabilidades
+) -> None:
+
+    habilidades = gerenciador.listar()
+
+    if not habilidades:
+
+        print()
+        print("JARVIS: Nenhum comando para apagar.")
+
+        return
+
+    print()
+    print("=" * 50)
+    print(" JARVIS - APAGAR COMANDO")
+    print("=" * 50)
+
+    print()
+
+    for indice, habilidade in enumerate(
+        habilidades,
+        start=1
+    ):
+
+        print(
+            f"[{indice}] {habilidade.get('nome', 'Sem nome')}"
+        )
+
+    print()
+
+    try:
+
+        escolha = int(
+            input(
+                "Número do comando: "
+            ).strip()
+        ) - 1
+
+    except ValueError:
+
+        print(
+            "JARVIS: Número inválido."
+        )
+
+        return
+
+    if escolha < 0 or escolha >= len(habilidades):
+
+        print(
+            "JARVIS: Comando inexistente."
+        )
+
+        return
+
+    nome = habilidades[escolha].get(
+        "nome",
+        ""
+    )
+
+    print()
+    print(
+        f"Comando selecionado: {nome}"
+    )
+
+    confirmacao = input(
+        "Digite SIM para apagar: "
+    ).strip().lower()
+
+    if confirmacao != "sim":
+
+        print(
+            "JARVIS: Operação cancelada."
+        )
+
+        return
+
+    if gerenciador.remover(nome):
+
+        print()
+        print(
+            "JARVIS: Comando apagado."
+        )
+
+    else:
+
+        print()
+        print(
+            "JARVIS: Não foi possível apagar."
+        )
+
+
+def gerenciar_comandos(
+    gerenciador: GerenciadorHabilidades
+) -> None:
+
+    while True:
+
+        print()
+        print("=" * 50)
+        print(" JARVIS - GERENCIADOR DE COMANDOS")
+        print("=" * 50)
+
+        print()
+        print("[1] Ensinar novo comando")
+        print("[2] Ver comandos")
+        print("[3] Editar comando")
+        print("[4] Apagar comando")
+        print("[5] Voltar ao menu")
+        print()
+
+        escolha = input(
+            "Escolha: "
+        ).strip()
+
+        if escolha == "1":
+
+            ensinar_comando(
+                gerenciador
+            )
+
+            continue
+
+        if escolha == "2":
+
+            listar_comandos(
+                gerenciador
+            )
+
+            input(
+                "\nPressione ENTER para continuar..."
+            )
+
+            continue
+
+        if escolha == "3":
+
+            editar_comando(
+                gerenciador
+            )
+
+            input(
+                "\nPressione ENTER para continuar..."
+            )
+
+            continue
+
+        if escolha == "4":
+
+            apagar_comando(
+                gerenciador
+            )
+
+            input(
+                "\nPressione ENTER para continuar..."
+            )
+
+            continue
+
+        if escolha == "5":
+
+            return
+
+        print()
+        print(
+            "JARVIS: Opção inválida."
+        )
+
+def ensinar_comando(
+    gerenciador: GerenciadorHabilidades
+) -> None:
+
+    print()
+    print("=" * 50)
+    print(" JARVIS - CENTRO DE ENSINO")
+    print("=" * 50)
+
+    print()
+    print(
+        "JARVIS: Vamos ensinar uma nova habilidade."
+    )
+
+    nome = input(
+        "Nome da habilidade: "
+    ).strip()
+
+    if not nome:
+
+        print(
+            "JARVIS: Nome obrigatório."
+        )
+
+        return
+
+    print()
+    print(
+        "Digite as frases que deverão ativar "
+        "essa habilidade."
+    )
+
+    print(
+        "Deixe vazio para terminar."
+    )
+
+    gatilhos = []
+
+    while True:
+
+        gatilho = input(
+            "Gatilho: "
+        ).strip()
+
+        if not gatilho:
+
+            break
+
+        gatilhos.append(
+            gatilho
+        )
+
+    if not gatilhos:
+
+        print(
+            "JARVIS: Nenhum gatilho informado."
+        )
+
+        return
+
+    print()
+    print(
+        "Tipos de ação:"
+    )
+
+    print(
+        "1 - abrir_programa"
+    )
+
+    print(
+        "2 - abrir_site"
+    )
+
+    print(
+        "3 - powershell"
+    )
+
+    print(
+        "4 - esperar"
+    )
+
+    print(
+        "5 - falar"
+    )
+
+    acoes = []
+
+    while True:
+
+        print()
+
+        opcao = input(
+            "Tipo da ação: "
+        ).strip()
+
+        mapa = {
+            "1": "abrir_programa",
+            "2": "abrir_site",
+            "3": "powershell",
+            "4": "esperar",
+            "5": "falar",
+        }
+
+        tipo = mapa.get(
+            opcao
+        )
+
+        if tipo is None:
+
+            print(
+                "JARVIS: Tipo inválido."
+            )
+
+            continue
+
+        valor = input(
+            f"Valor para {tipo}: "
+        ).strip()
+
+        if not valor:
+
+            print(
+                "JARVIS: Valor obrigatório."
+            )
+
+            continue
+
+        acoes.append(
+            {
+                "tipo": tipo,
+                "valor": valor,
+            }
+        )
+
+        adicionar = input(
+            "Adicionar outra ação? [s/n]: "
+        ).strip().lower()
+
+        if adicionar != "s":
+
+            break
+
+    if not acoes:
+
+        print(
+            "JARVIS: Nenhuma ação criada."
+        )
+
+        return
+
+    habilidade = gerenciador.adicionar(
+        nome,
+        gatilhos,
+        acoes
+    )
+
+    print()
+    print("=" * 50)
+    print(" HABILIDADE APRENDIDA")
+    print("=" * 50)
+
+    print(
+        "Nome:",
+        habilidade["nome"]
+    )
+
+    print(
+        "Gatilhos:",
+        ", ".join(
+            habilidade["gatilhos"]
+        )
+    )
+
+    print(
+        "Ações:",
+        len(
+            habilidade["acoes"]
+        )
+    )
+
+    print()
+    print(
+        "JARVIS: Pronto. Aprendi essa habilidade."
+    )
+
+# ================================================================
+# PROCESSAMENTO DO COMANDO
+# ================================================================
+
+def processar_comando(
+    comando: str,
+    orquestrador: Orquestrador,
+    executor: Executor,
+    nav: NavegadorManager,
+    gerenciador_habilidades: GerenciadorHabilidades,
+    executor_habilidades: ExecutorHabilidades,
+) -> None:
+
+    habilidade = gerenciador_habilidades.encontrar(
+        comando
+    )
+
+    if habilidade is not None:
+
+        print()
+        print(
+            "JARVIS: Habilidade aprendida encontrada."
+        )
+
+        resultado = executor_habilidades.executar(
+            habilidade
+        )
+
+        print()
+        print(
+            "JARVIS:",
+            resultado
+        )
+
+        return
+
+    pagina = nav.garantir_pagina()
+
+    acao = orquestrador.interpretar(
+        comando
+    )
+
+    print(
+        "AÃ‡ÃƒO:",
+        acao
+    )
+
+    tipo_acao = acao.get(
+        "acao"
+    )
+
+    if tipo_acao == "desconhecida":
+
+        resultado = (
+            "Ainda não sei executar "
+            "esse comando."
+        )
+
+    else:
+
+        resultado = executor.executar(
+            pagina,
+            acao
+        )
+
+    if (
+        isinstance(resultado, dict)
+        and tipo_acao == "ler"
+    ):
+
+        mostrar_pagina(
+            resultado
+        )
+
+        return
+
+    print()
+    print(
+        "JARVIS:",
+        resultado
+    )
+
+
+# ================================================================
+# LOOP PRINCIPAL
+# ================================================================
+
+def main() -> None:
+
+    orquestrador = Orquestrador()
+
+    executor = Executor()
+
+    gerenciador_habilidades = (
+        GerenciadorHabilidades()
+    )
+
+    executor_habilidades = (
+        ExecutorHabilidades()
+    )
+
+    print("=" * 50)
+    print(" J.A.R.V.I.S - NÃšCLEO OPERACIONAL")
+    print("=" * 50)
+    print("Voz e texto ativados.")
+    print()
+
+    erros_seguidos = 0
+
+    with sync_playwright() as p:
+
+        nav = NavegadorManager(
+            p,
+            headless=False
+        )
+
+        try:
+
+            while True:
+
+                try:
+
+                    comando = obter_comando()
+
+                except KeyboardInterrupt:
+
+                    print(
+                        "\nJARVIS: Interrompido "
+                        "pelo usuário. Encerrando."
+                    )
+
+                    break
+
+                if not comando:
+
+                    print(
+                        "JARVIS: Não entendi."
+                    )
+
+                    continue
+
+                if comando == "__ENSINAR_COMANDO__":
+
+                    gerenciar_comandos(
+                        gerenciador_habilidades
+                    )
+
+                    continue
+
+                if comando.lower() in COMANDOS_SAIDA:
+
+                    print(
+                        "JARVIS: Encerrando."
+                    )
+
+                    break
+
+                print(
+                    f"JARVIS recebeu: {comando}"
+                )
+
+                try:
+
+                    processar_comando(
+                        comando,
+                        orquestrador,
+                        executor,
+                        nav,
+                        gerenciador_habilidades,
+                        executor_habilidades,
+                    )
+
+                    erros_seguidos = 0
+
+                except Exception as erro:
+
+                    erros_seguidos += 1
+
+                    print()
+                    print(
+                        "JARVIS: Erro durante "
+                        "a execução."
+                    )
+
+                    print(
+                        f"ERRO: {erro}"
+                    )
+
+                    traceback.print_exc()
+
+                    if erros_seguidos >= MAX_ERROS_SEGUIDOS:
+
+                        print(
+                            f"JARVIS: {MAX_ERROS_SEGUIDOS} "
+                            "erros seguidos â€” algo está "
+                            "sistematicamente errado."
+                        )
+
+                        print(
+                            "JARVIS: Encerrando para "
+                            "evitar loop infinito."
+                        )
+
+                        break
+
+                    try:
+
+                        nav.garantir_pagina()
+
+                        print(
+                            "JARVIS: Navegador "
+                            "verificado/reconstruído."
+                        )
+
+                    except Exception as erro2:
+
+                        print(
+                            "JARVIS: Não consegui "
+                            "reconstruir o navegador."
+                        )
+
+                        print(
+                            f"ERRO: {erro2}"
+                        )
+
+                print()
+
+        finally:
+
+            nav.fechar()
+
+
+# ================================================================
+# ENTRY POINT
+# ================================================================
+
+if __name__ == "__main__":
+
+    main()
+
+
+
+
+
+
+
+
+
+
+
