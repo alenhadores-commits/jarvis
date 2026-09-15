@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 
 """
 J.A.R.V.I.S — MEMÓRIA LOCAL
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import uuid
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -42,11 +43,16 @@ class MemoriaLocal:
             self.memoria_dir / "memorias_permanentes.json"
         )
 
+        self.arquivo_seed = Path(
+            "/etc/secrets/memorias_permanentes.json"
+        )
+
         self.memoria_dir.mkdir(
             parents=True,
             exist_ok=True
         )
 
+        self._preparar_memoria_seed()
         self._garantir_arquivos()
 
     # ============================================================
@@ -112,6 +118,30 @@ class MemoriaLocal:
     # ============================================================
     # GARANTIR ESTRUTURA
     # ============================================================
+
+    def _preparar_memoria_seed(self) -> None:
+        """
+        Usa o Secret File do Render como memoria inicial.
+        O arquivo local continua gravavel.
+        """
+        if self.arquivo_permanente.exists():
+            return
+
+        if not self.arquivo_seed.exists():
+            return
+
+        try:
+            self.arquivo_permanente.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            shutil.copyfile(
+                self.arquivo_seed,
+                self.arquivo_permanente,
+            )
+        except OSError:
+            pass
 
     def _garantir_arquivos(self) -> None:
 
