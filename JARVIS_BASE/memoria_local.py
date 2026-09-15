@@ -55,6 +55,21 @@ class MemoriaLocal:
         self._preparar_memoria_seed()
         self._garantir_arquivos()
 
+        try:
+            origem = (
+                "SECRET FILE"
+                if self.arquivo_seed.exists()
+                else "ARQUIVO LOCAL"
+            )
+            total = len(self.carregar_memorias())
+            print(
+                f"JARVIS MEMORIA: origem={origem} total={total}"
+            )
+        except Exception as erro:
+            print(
+                f"JARVIS MEMORIA: falha na verificacao: {erro}"
+            )
+
     # ============================================================
     # UTILITARIOS
     # ============================================================
