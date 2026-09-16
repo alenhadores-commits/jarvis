@@ -1,5 +1,7 @@
-﻿import os
-import requests
+﻿import requests
+
+
+FREE_SERP_URL = "https://freeserp.ai/api.php"
 
 
 def deve_pesquisar(mensagem: str) -> bool:
@@ -23,7 +25,10 @@ def deve_pesquisar(mensagem: str) -> bool:
         "quem sou eu",
     )
 
-    if any(item in texto for item in pessoais):
+    if any(
+        item in texto
+        for item in pessoais
+    ):
         return False
 
     gatilhos = (
@@ -54,7 +59,10 @@ def deve_pesquisar(mensagem: str) -> bool:
         "mais recente",
     )
 
-    if any(gatilho in texto for gatilho in gatilhos):
+    if any(
+        gatilho in texto
+        for gatilho in gatilhos
+    ):
         return True
 
     return "?" in texto
@@ -64,53 +72,121 @@ def pesquisar_web(
     consulta: str,
     limite: int = 5,
 ) -> list[dict]:
-    chave = os.getenv(
-        "BRAVE_SEARCH_API_KEY",
-        "",
+    consulta = str(
+        consulta or ""
     ).strip()
 
-    if not chave:
+    if not consulta:
         return []
 
     try:
         resposta = requests.get(
-            "https://api.search.brave.com/res/v1/web/search",
-            headers={
-                "Accept": "application/json",
-                "X-Subscription-Token": chave,
-            },
+            FREE_SERP_URL,
             params={
                 "q": consulta,
-                "count": limite,
-                "search_lang": "pt-br",
-                "country": "br",
-                "safesearch": "moderate",
+                "size": limite,
             },
-            timeout=15,
+            timeout=20,
         )
 
         resposta.raise_for_status()
 
         dados = resposta.json()
 
+        if not isinstance(
+            dados,
+            dict,
+        ):
+            return []
+
+        resultados_brutos = (
+            dados.get("results")
+            or dados.get("data")
+            or dados.get("items")
+            or []
+        )
+
+        if not isinstance(
+            resultados_brutos,
+            list,
+        ):
+            return []
+
         resultados = []
 
-        for item in (
-            dados.get("web", {}).get(
-                "results",
-                []
-            )
-        )[:limite]:
+        for item in resultados_brutos[:limite]:
+            if not isinstance(
+                item,
+                dict,
+            ):
+                continue
+
+            titulo = str(
+                item.get(
+                    "title",
+                    item.get(
+                        "name",
+                        "",
+                    ),
+                )
+            ).strip()
+
+            url = str(
+                item.get(
+                    "url",
+                    item.get(
+                        "link",
+                        "",
+                    ),
+                )
+            ).strip()
+
+            resumo = str(
+                item.get(
+                    "summary",
+                    item.get(
+                        "snippet",
+                        item.get(
+                            "description",
+                            "",
+                        ),
+                    ),
+                )
+            ).strip()
+
+            dominio = str(
+                item.get(
+                    "domain",
+                    "",
+                )
+            ).strip()
+
+            data_publicacao = str(
+                item.get(
+                    "published_at",
+                    item.get(
+                        "published",
+                        item.get(
+                            "date",
+                            "",
+                        ),
+                    ),
+                )
+            ).strip()
+
+            if not (
+                titulo
+                or url
+                or resumo
+            ):
+                continue
+
             resultados.append({
-                "title": str(
-                    item.get("title", "")
-                ).strip(),
-                "url": str(
-                    item.get("url", "")
-                ).strip(),
-                "description": str(
-                    item.get("description", "")
-                ).strip(),
+                "title": titulo,
+                "url": url,
+                "description": resumo,
+                "domain": dominio,
+                "published": data_publicacao,
             })
 
         return resultados
@@ -127,8 +203,10 @@ def montar_contexto_web(
 
     partes = [
         "CONTEXTO DE PESQUISA WEB DO J.A.R.V.I.S.",
-        "Use estas fontes para responder com informações "
-        "atualizadas e verificáveis.",
+        "Abaixo estão resultados do FreeSerp.",
+        "Use-os como fonte externa para responder.",
+        "Não invente informações que não estejam "
+        "presentes nas fontes.",
         "",
     ]
 
@@ -136,23 +214,53 @@ def montar_contexto_web(
         resultados,
         start=1,
     ):
-        partes.append(
-            f"[FONTE {indice}] "
-            f"{item.get('title', '')}"
+        titulo = item.get(
+            "title",
+            "",
         )
 
-        partes.append(
-            f"URL: {item.get('url', '')}"
+        url = item.get(
+            "url",
+            "",
         )
 
-        descricao = item.get(
+        resumo = item.get(
             "description",
             "",
         )
 
-        if descricao:
+        dominio = item.get(
+            "domain",
+            "",
+        )
+
+        publicada = item.get(
+            "published",
+            "",
+        )
+
+        partes.append(
+            f"[FONTE {indice}] {titulo}"
+        )
+
+        if dominio:
             partes.append(
-                f"Resumo: {descricao}"
+                f"Domínio: {dominio}"
+            )
+
+        if publicada:
+            partes.append(
+                f"Data: {publicada}"
+            )
+
+        if url:
+            partes.append(
+                f"URL: {url}"
+            )
+
+        if resumo:
+            partes.append(
+                f"Resumo: {resumo}"
             )
 
         partes.append("")
