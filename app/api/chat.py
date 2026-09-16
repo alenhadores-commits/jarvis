@@ -3,10 +3,18 @@ from pydantic import BaseModel
 import os
 import requests
 
-from JARVIS_BASE.memoria_local import MemoriaLocal
 from JARVIS_BASE.memoria_classificador import classificar_memoria
+from app.core.memoria_persistente import MemoriaPersistente
+from app.core.pesquisa_web import (
+    deve_pesquisar,
+    montar_contexto_web,
+    pesquisar_web,
+)
 
-router = APIRouter(prefix="/api", tags=["JARVIS"])
+router = APIRouter(
+    prefix="/api",
+    tags=["JARVIS"],
+)
 
 
 class ChatRequest(BaseModel):
@@ -18,60 +26,35 @@ class ChatResponse(BaseModel):
 
 
 def obter_url_router():
-    port = os.getenv("PORT", "8000")
-    return f"http://127.0.0.1:{port}/ia-router/v1/chat/completions"
+    port = os.getenv(
+        "PORT",
+        "8000",
+    )
+
+    return (
+        f"http://127.0.0.1:{port}"
+        "/ia-router/v1/chat/completions"
+    )
 
 
-def recuperar_memoria(mensagem: str) -> str:
+def salvar_memoria_se_aplicavel(
+    mensagem: str,
+) -> None:
     try:
-        memoria = MemoriaLocal()
-        resultados = memoria.buscar_memorias(mensagem)
-
-        if not resultados:
-            return ""
-
-        partes = []
-
-        for item in resultados[:5]:
-            tipo = str(
-                item.get("tipo", "MEMORIA")
-            ).strip()
-
-            conteudo = str(
-                item.get("conteudo", "")
-            ).strip()
-
-            if conteudo:
-                partes.append(
-                    f"[{tipo}] {conteudo}"
-                )
-
-        if not partes:
-            return ""
-
-        return (
-            "CONTEXTO DE MEMÓRIA DO J.A.R.V.I.S.\n"
-            "Use estas informações como memória previamente "
-            "registrada quando forem relevantes para responder "
-            "ao usuário.\n\n"
-            + "\n".join(partes)
+        classificacao = classificar_memoria(
+            mensagem
         )
 
-    except Exception:
-        return ""
-
-
-def salvar_memoria_se_aplicavel(mensagem: str) -> None:
-    try:
-        classificacao = classificar_memoria(mensagem)
-
-        if not classificacao.get("permanente", False):
+        if not classificacao.get(
+            "permanente",
+            False,
+        ):
             return
 
         conteudo = str(
             classificacao.get(
                 "conteudo",
-                mensagem
+                mensagem,
             )
         ).strip()
 
@@ -91,67 +74,114 @@ def salvar_memoria_se_aplicavel(mensagem: str) -> None:
             "não esqueça que ",
         )
 
-        conteudo_normalizado = conteudo.lower()
+        normalizado = conteudo.lower()
 
         for prefixo in prefixos:
-            if conteudo_normalizado.startswith(prefixo):
-                conteudo = conteudo[len(prefixo):].strip()
+            if normalizado.startswith(prefixo):
+                conteudo = (
+                    conteudo[
+                        len(prefixo):
+                    ].strip()
+                )
                 break
 
         if not conteudo:
             return
 
-        tipo = str(
-            classificacao.get(
-                "tipo",
-                "OUTRO"
-            )
-        ).strip() or "OUTRO"
-
-        try:
-            importancia = int(
-                classificacao.get(
-                    "importancia",
-                    5
-                )
-            )
-        except (
-            TypeError,
-            ValueError,
-        ):
-            importancia = 5
-
-        memoria = MemoriaLocal()
+        memoria = MemoriaPersistente()
 
         memoria.salvar_memoria(
             conteudo=conteudo,
-            tipo=tipo,
-            importancia=importancia,
+            tipo=str(
+                classificacao.get(
+                    "tipo",
+                    "OUTRO",
+                )
+            ).strip() or "OUTRO",
+            importancia=int(
+                classificacao.get(
+                    "importancia",
+                    5,
+                )
+            ),
             duracao="PERMANENTE",
         )
 
     except Exception:
-        # Memória nunca pode impedir a conversa de funcionar.
         return
 
 
-@router.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest):
+def recuperar_memoria(
+    mensagem: str,
+) -> str:
+    try:
+        memoria = MemoriaPersistente()
+
+        resultados = memoria.buscar_memorias(
+            mensagem,
+            limite=8,
+        )
+
+        if not resultados:
+            return ""
+
+        partes = [
+            "CONTEXTO DE MEMÓRIA DO J.A.R.V.I.S.",
+            "Use somente quando for relevante.",
+            "",
+        ]
+
+        for item in resultados:
+            tipo = str(
+                item.get(
+                    "tipo",
+                    "MEMORIA",
+                )
+            ).strip()
+
+            conteudo = str(
+                item.get(
+                    "conteudo",
+                    "",
+                )
+            ).strip()
+
+            if conteudo:
+                partes.append(
+                    f"[{tipo}] {conteudo}"
+                )
+
+        return "\n".join(
+            partes
+        )
+
+    except Exception:
+        return ""
+
+
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+)
+def chat(
+    request: ChatRequest,
+):
     mensagem = request.message.strip()
 
     if not mensagem:
         raise HTTPException(
             status_code=400,
-            detail="Mensagem vazia."
+            detail="Mensagem vazia.",
         )
 
-    # Primeiro tenta promover a mensagem para memória permanente.
-    salvar_memoria_se_aplicavel(mensagem)
+    salvar_memoria_se_aplicavel(
+        mensagem
+    )
 
     mensagens = []
 
-    contexto_memoria = recuperar_memoria(
-        mensagem
+    contexto_memoria = (
+        recuperar_memoria(mensagem)
     )
 
     if contexto_memoria:
@@ -160,13 +190,31 @@ def chat(request: ChatRequest):
             "content": contexto_memoria,
         })
 
+    contexto_web = ""
+
+    if deve_pesquisar(mensagem):
+        resultados_web = pesquisar_web(
+            mensagem,
+            limite=5,
+        )
+
+        contexto_web = montar_contexto_web(
+            resultados_web
+        )
+
+        if contexto_web:
+            mensagens.append({
+                "role": "system",
+                "content": contexto_web,
+            })
+
     mensagens.append({
         "role": "user",
         "content": mensagem,
     })
 
     payload = {
-        "messages": mensagens
+        "messages": mensagens,
     }
 
     try:
@@ -188,13 +236,21 @@ def chat(request: ChatRequest):
         dados = resposta.json()
 
         try:
-            texto = dados["choices"][0]["message"]["content"]
+            texto = dados[
+                "choices"
+            ][0][
+                "message"
+            ][
+                "content"
+            ]
         except (
             KeyError,
             IndexError,
             TypeError,
         ):
-            texto = str(dados)
+            texto = str(
+                dados
+            )
 
         return ChatResponse(
             response=texto
@@ -204,7 +260,7 @@ def chat(request: ChatRequest):
         raise HTTPException(
             status_code=502,
             detail=(
-                "Falha ao comunicar com o IA Router: "
-                f"{erro}"
+                "Falha ao comunicar com "
+                f"o IA Router: {erro}"
             ),
         )
