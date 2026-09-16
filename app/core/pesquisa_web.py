@@ -6,22 +6,129 @@ FREE_SERP_URL = "https://freeserp.ai/api.php"
 
 
 def normalizar(texto: str) -> str:
-    texto = str(texto or "").lower()
-    texto = unicodedata.normalize(
-        "NFKD",
-        texto,
-    )
+    texto = str(texto or "").lower().strip()
+    texto = unicodedata.normalize("NFKD", texto)
     return "".join(
-        c
-        for c in texto
+        c for c in texto
         if not unicodedata.combining(c)
     )
 
 
+def preparar_consulta(consulta: str) -> list[str]:
+    original = " ".join(str(consulta or "").split()).strip()
+
+    if not original:
+        return []
+
+    sem_prefixo = original
+
+    prefixos = (
+        "qual ",
+        "quem ",
+        "onde ",
+        "quando ",
+        "como ",
+        "por que ",
+        "porque ",
+        "o que ",
+        "me diga ",
+        "me mostre ",
+        "pesquise ",
+        "pesquisa ",
+        "procure ",
+        "quero saber ",
+    )
+
+    for prefixo in prefixos:
+        if sem_prefixo.lower().startswith(prefixo):
+            sem_prefixo = sem_prefixo[len(prefixo):].strip()
+            break
+
+    palavras = [
+        palavra
+        for palavra in sem_prefixo.split()
+        if palavra.lower() not in {
+            "o", "a", "os", "as",
+            "do", "da", "dos", "das",
+            "de", "em", "no", "na",
+            "um", "uma", "e",
+        }
+    ]
+
+    consultas = []
+
+    def adicionar(valor: str):
+        valor = " ".join(str(valor or "").split()).strip()
+        if valor and valor not in consultas:
+            consultas.append(valor)
+
+    adicionar(original)
+
+    clubes = (
+        "Palmeiras",
+        "Corinthians",
+        "Flamengo",
+        "Santos",
+        "São Paulo",
+        "Vasco",
+        "Grêmio",
+        "Internacional",
+        "Cruzeiro",
+        "Atlético Mineiro",
+        "Botafogo",
+        "Fluminense",
+        "Bahia",
+        "Fortaleza",
+    )
+
+    termos = {
+        "proximo": "próximo",
+        "proxima": "próxima",
+        "ultimo": "último",
+        "ultima": "última",
+        "noticias": "notícias",
+        "noticia": "notícia",
+        "ultimos": "últimos",
+        "ultimas": "últimas",
+        "jogos": "jogos",
+        "futebol": "futebol",
+    }
+
+    palavras_acentuadas = [
+        termos.get(
+            palavra.lower(),
+            palavra,
+        )
+        for palavra in palavras
+    ]
+
+    consulta_acentuada = " ".join(palavras_acentuadas)
+
+    if consulta_acentuada:
+        for clube in clubes:
+            clube_norm = normalizar(clube)
+
+            if clube_norm in normalizar(consulta_acentuada):
+                restantes = [
+                    palavra
+                    for palavra in palavras_acentuadas
+                    if normalizar(palavra) != clube_norm
+                ]
+
+                if restantes:
+                    adicionar(
+                        f"{clube} {' '.join(restantes)}"
+                    )
+
+                break
+
+        adicionar(consulta_acentuada)
+        adicionar(" ".join(palavras))
+
+    return consultas
+
 def deve_pesquisar(mensagem: str) -> bool:
-    texto = str(
-        mensagem or ""
-    ).strip()
+    texto = str(mensagem or "").strip()
 
     if not texto:
         return False
@@ -41,13 +148,9 @@ def deve_pesquisar(mensagem: str) -> bool:
         "quem sou eu",
     )
 
-    if any(
-        item in normalizado
-        for item in pessoais
-    ):
+    if any(item in normalizado for item in pessoais):
         return False
 
-    # Perguntas factuais comuns.
     gatilhos = (
         "quem ",
         "qual ",
@@ -77,132 +180,108 @@ def deve_pesquisar(mensagem: str) -> bool:
         "futebol",
     )
 
-    if any(
-        gatilho in normalizado
-        for gatilho in gatilhos
-    ):
+    if any(gatilho in normalizado for gatilho in gatilhos):
         return True
 
-    if "?" in texto:
-        return True
-
-    return False
+    return "?" in texto
 
 
 def pesquisar_web(
     consulta: str,
     limite: int = 5,
 ) -> list[dict]:
-    consulta = str(
-        consulta or ""
-    ).strip()
+    consultas = preparar_consulta(consulta)
 
-    if not consulta:
+    if not consultas:
         return []
 
-    try:
-        resposta = requests.get(
-            FREE_SERP_URL,
-            params={
-                "q": consulta,
-                "size": limite,
-            },
-            timeout=20,
-        )
+    for tentativa, consulta_teste in enumerate(consultas, start=1):
+        try:
+            resposta = requests.get(
+                FREE_SERP_URL,
+                params={
+                    "q": consulta_teste,
+                    "size": limite,
+                },
+                timeout=20,
+            )
 
-        resposta.raise_for_status()
+            resposta.raise_for_status()
+            dados = resposta.json()
 
-        dados = resposta.json()
+            resultados_brutos = dados.get("results", [])
 
-        resultados_brutos = dados.get(
-            "results",
-            [],
-        )
-
-        if not isinstance(
-            resultados_brutos,
-            list,
-        ):
-            return []
-
-        resultados = []
-
-        for item in resultados_brutos[:limite]:
-            if not isinstance(
-                item,
-                dict,
-            ):
+            if not isinstance(resultados_brutos, list):
                 continue
 
-            titulo = str(
-                item.get(
-                    "title",
-                    "",
-                )
-            ).strip()
+            resultados = []
 
-            url = str(
-                item.get(
-                    "url",
-                    "",
-                )
-            ).strip()
+            for item in resultados_brutos[:limite]:
+                if not isinstance(item, dict):
+                    continue
 
-            resumo = str(
-                item.get(
-                    "ai_summary",
+                titulo = str(
+                    item.get("title", "")
+                ).strip()
+
+                url = str(
+                    item.get("url", "")
+                ).strip()
+
+                resumo = str(
                     item.get(
-                        "summary",
+                        "ai_summary",
                         item.get(
-                            "description",
-                            "",
+                            "summary",
+                            item.get(
+                                "description",
+                                "",
+                            ),
                         ),
-                    ),
-                )
-            ).strip()
+                    )
+                ).strip()
 
-            dominio = str(
-                item.get(
-                    "domain",
-                    "",
-                )
-            ).strip()
+                dominio = str(
+                    item.get("domain", "")
+                ).strip()
 
-            publicada = str(
-                item.get(
-                    "went_live",
+                publicada = str(
                     item.get(
                         "published",
                         item.get(
                             "date",
-                            "",
+                            item.get(
+                                "went_live",
+                                "",
+                            ),
                         ),
-                    ),
-                )
-            ).strip()
+                    )
+                ).strip()
 
-            if not (
-                titulo
-                or url
-                or resumo
-            ):
-                continue
+                if not (titulo or url or resumo):
+                    continue
 
-            resultados.append({
-                "title": titulo,
-                "url": url,
-                "description": resumo,
-                "domain": dominio,
-                "published": publicada,
-            })
+                resultados.append({
+                    "title": titulo,
+                    "url": url,
+                    "description": resumo,
+                    "domain": dominio,
+                    "published": publicada,
+                })
 
-        return resultados
+            if resultados:
+                if tentativa > 1:
+                    print(
+                        f"JARVIS WEB: consulta ajustada -> {consulta_teste}"
+                    )
+                return resultados
 
-    except Exception as erro:
-        print(
-            f"JARVIS WEB: falha FreeSerp: {erro}"
-        )
-        return []
+        except Exception as erro:
+            print(
+                f"JARVIS WEB: falha FreeSerp: {erro}"
+            )
+
+    return []
 
 
 def montar_contexto_web(
@@ -252,3 +331,7 @@ def montar_contexto_web(
         partes.append("")
 
     return "\n".join(partes)
+
+
+
+
