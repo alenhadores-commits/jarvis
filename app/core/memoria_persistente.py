@@ -1,39 +1,38 @@
-﻿import json
+﻿from pathlib import Path
+import json
 import os
-from pathlib import Path
 from typing import Any
 
 import psycopg
 
 
 class MemoriaPersistente:
-    """
-    Memoria do JARVIS Cloud.
-
-    Com DATABASE_URL:
-        PostgreSQL persistente.
-
-    Sem DATABASE_URL:
-        fallback para MemoriaLocal.
-    """
 
     def __init__(self):
-        self.database_url = os.getenv("DATABASE_URL", "").strip()
+        self.database_url = os.getenv(
+            "DATABASE_URL",
+            "",
+        ).strip()
+
         self.seed_paths = [
-            Path("/etc/secrets/memorias_permanentes.json"),
-            Path(__file__).resolve().parents[2]
-            / "JARVIS_BASE"
-            / "memoria"
-            / "memorias_permanentes.json",
+            Path(
+                "/etc/secrets/"
+                "memorias_permanentes.json"
+            ),
+            (
+                Path(__file__).resolve().parents[2]
+                / "JARVIS_BASE"
+                / "memoria"
+                / "memorias_permanentes.json"
+            ),
         ]
 
     def disponivel(self) -> bool:
-        return bool(self.database_url)
+        return bool(
+            self.database_url
+        )
 
     def _conectar(self):
-        if not self.database_url:
-            return None
-
         return psycopg.connect(
             self.database_url,
             autocommit=True,
@@ -51,29 +50,15 @@ class MemoriaPersistente:
                         duracao TEXT NOT NULL,
                         conteudo TEXT NOT NULL,
                         importancia INTEGER NOT NULL DEFAULT 5,
-                        criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        criado_em TIMESTAMP NULL,
+                        atualizado_em TIMESTAMP NULL
                     )
                     """
                 )
 
-                cur.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS
-                    idx_jarvis_memorias_tipo
-                    ON jarvis_memorias(tipo)
-                    """
-                )
-
-                cur.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS
-                    idx_jarvis_memorias_atualizado
-                    ON jarvis_memorias(atualizado_em DESC)
-                    """
-                )
-
-    def _carregar_seed(self) -> list[dict[str, Any]]:
+    def _carregar_seed(
+        self,
+    ) -> list[dict[str, Any]]:
         for caminho in self.seed_paths:
             try:
                 if not caminho.exists():
@@ -85,100 +70,128 @@ class MemoriaPersistente:
                     )
                 )
 
-                memorias = dados.get("memorias", [])
+                memorias = dados.get(
+                    "memorias",
+                    [],
+                )
 
-                if isinstance(memorias, list):
+                if isinstance(
+                    memorias,
+                    list,
+                ):
                     return [
                         item
                         for item in memorias
-                        if isinstance(item, dict)
+                        if isinstance(
+                            item,
+                            dict,
+                        )
                     ]
 
-            except Exception:
-                continue
+            except Exception as erro:
+                print(
+                    f"JARVIS MEMORIA: "
+                    f"falha no seed {caminho}: {erro}"
+                )
 
         return []
 
-    def _importar_seed_se_necessario(self):
-        with self._conectar() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT COUNT(*) FROM jarvis_memorias"
-                )
-
-                total = int(
-                    cur.fetchone()[0]
-                )
-
-                if total > 0:
-                    return
-
-        memorias = self._carregar_seed()
-
-        if not memorias:
-            return
-
-        with self._conectar() as conn:
-            with conn.cursor() as cur:
-                for memoria in memorias:
-                    cur.execute(
-                        """
-                        INSERT INTO jarvis_memorias (
-                            id,
-                            tipo,
-                            duracao,
-                            conteudo,
-                            importancia,
-                            criado_em,
-                            atualizado_em
-                        )
-                        VALUES (
-                            %s, %s, %s, %s, %s, %s, %s
-                        )
-                        ON CONFLICT (id) DO NOTHING
-                        """,
-                        (
-                            str(
-                                memoria.get(
-                                    "id",
-                                    ""
-                                )
-                            ),
-                            str(
-                                memoria.get(
-                                    "tipo",
-                                    "OUTRO"
-                                )
-                            ),
-                            str(
-                                memoria.get(
-                                    "duracao",
-                                    "PERMANENTE"
-                                )
-                            ),
-                            str(
-                                memoria.get(
-                                    "conteudo",
-                                    ""
-                                )
-                            ),
-                            int(
-                                memoria.get(
-                                    "importancia",
-                                    5
-                                )
-                            ),
-                            memoria.get("criado_em"),
-                            memoria.get("atualizado_em"),
-                        ),
-                    )
-
     def preparar(self):
         if not self.disponivel():
-            return
+            print(
+                "JARVIS MEMORIA: "
+                "DATABASE_URL nao configurada"
+            )
+            return False
 
-        self._garantir_tabela()
-        self._importar_seed_se_necessario()
+        try:
+            self._garantir_tabela()
+
+            with self._conectar() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM jarvis_memorias"
+                    )
+                    total = int(
+                        cur.fetchone()[0]
+                    )
+
+            if total == 0:
+                memorias = self._carregar_seed()
+
+                if memorias:
+                    with self._conectar() as conn:
+                        with conn.cursor() as cur:
+                            for memoria in memorias:
+                                conteudo = str(
+                                    memoria.get(
+                                        "conteudo",
+                                        "",
+                                    )
+                                ).strip()
+
+                                if not conteudo:
+                                    continue
+
+                                cur.execute(
+                                    """
+                                    INSERT INTO jarvis_memorias (
+                                        id,
+                                        tipo,
+                                        duracao,
+                                        conteudo,
+                                        importancia,
+                                        criado_em,
+                                        atualizado_em
+                                    )
+                                    VALUES (
+                                        %s,%s,%s,%s,%s,%s,%s
+                                    )
+                                    ON CONFLICT (id)
+                                    DO NOTHING
+                                    """,
+                                    (
+                                        str(
+                                            memoria.get(
+                                                "id",
+                                                "",
+                                            )
+                                        ),
+                                        str(
+                                            memoria.get(
+                                                "tipo",
+                                                "OUTRO",
+                                            )
+                                        ),
+                                        str(
+                                            memoria.get(
+                                                "duracao",
+                                                "PERMANENTE",
+                                            )
+                                        ),
+                                        conteudo,
+                                        int(
+                                            memoria.get(
+                                                "importancia",
+                                                5,
+                                            )
+                                        ),
+                                        memoria.get(
+                                            "criado_em"
+                                        ),
+                                        memoria.get(
+                                            "atualizado_em"
+                                        ),
+                                    ),
+                                )
+
+            return True
+
+        except Exception as erro:
+            print(
+                f"JARVIS MEMORIA: erro PostgreSQL: {erro}"
+            )
+            return False
 
     def salvar_memoria(
         self,
@@ -191,19 +204,11 @@ class MemoriaPersistente:
             conteudo or ""
         ).strip()
 
-        if not conteudo:
+        if not conteudo or not self.disponivel():
             return {}
 
-        if not self.disponivel():
-            from JARVIS_BASE.memoria_local import MemoriaLocal
-            return MemoriaLocal().salvar_memoria(
-                conteudo=conteudo,
-                tipo=tipo,
-                importancia=importancia,
-                duracao=duracao,
-            )
-
-        self.preparar()
+        if not self.preparar():
+            return {}
 
         importancia = max(
             0,
@@ -217,11 +222,10 @@ class MemoriaPersistente:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT
-                        id,
-                        criado_em
+                    SELECT id
                     FROM jarvis_memorias
-                    WHERE LOWER(conteudo) = LOWER(%s)
+                    WHERE LOWER(conteudo)
+                          = LOWER(%s)
                     LIMIT 1
                     """,
                     (conteudo,),
@@ -238,18 +242,15 @@ class MemoriaPersistente:
                         """
                         UPDATE jarvis_memorias
                         SET
-                            tipo = %s,
-                            duracao = %s,
-                            importancia = %s,
-                            atualizado_em = CURRENT_TIMESTAMP
-                        WHERE id = %s
+                            tipo=%s,
+                            duracao=%s,
+                            importancia=%s,
+                            atualizado_em=CURRENT_TIMESTAMP
+                        WHERE id=%s
                         """,
                         (
-                            str(tipo or "OUTRO"),
-                            str(
-                                duracao
-                                or "PERMANENTE"
-                            ),
+                            tipo or "OUTRO",
+                            duracao or "PERMANENTE",
                             importancia,
                             memoria_id,
                         ),
@@ -272,16 +273,13 @@ class MemoriaPersistente:
                             importancia
                         )
                         VALUES (
-                            %s, %s, %s, %s, %s
+                            %s,%s,%s,%s,%s
                         )
                         """,
                         (
                             memoria_id,
-                            str(tipo or "OUTRO"),
-                            str(
-                                duracao
-                                or "PERMANENTE"
-                            ),
+                            tipo or "OUTRO",
+                            duracao or "PERMANENTE",
                             conteudo,
                             importancia,
                         ),
@@ -289,10 +287,8 @@ class MemoriaPersistente:
 
         return {
             "id": memoria_id,
-            "tipo": str(tipo or "OUTRO"),
-            "duracao": str(
-                duracao or "PERMANENTE"
-            ),
+            "tipo": tipo or "OUTRO",
+            "duracao": duracao or "PERMANENTE",
             "conteudo": conteudo,
             "importancia": importancia,
         }
@@ -304,27 +300,19 @@ class MemoriaPersistente:
     ) -> list[dict[str, Any]]:
         consulta = str(
             consulta or ""
-        ).strip()
+        ).strip().lower()
 
-        if not consulta:
+        if not consulta or not self.disponivel():
             return []
 
-        if not self.disponivel():
-            from JARVIS_BASE.memoria_local import MemoriaLocal
-            return MemoriaLocal().buscar_memorias(
-                consulta
-            )[:limite]
-
-        self.preparar()
+        if not self.preparar():
+            return []
 
         palavras = [
-            p.lower()
-            for p in consulta.split()
-            if len(p) >= 3
+            palavra
+            for palavra in consulta.split()
+            if len(palavra) >= 3
         ]
-
-        if not palavras:
-            return []
 
         resultados = []
 
@@ -341,7 +329,7 @@ class MemoriaPersistente:
                         criado_em,
                         atualizado_em
                     FROM jarvis_memorias
-                    ORDER BY atualizado_em DESC
+                    ORDER BY atualizado_em DESC NULLS LAST
                     """
                 )
 
@@ -372,9 +360,9 @@ class MemoriaPersistente:
 
         resultados.sort(
             key=lambda item: (
-                item.get("_relevancia", 0),
-                item.get("atualizado_em", ""),
-                item.get("importancia", 0),
+                item["_relevancia"],
+                item["atualizado_em"],
+                item["importancia"],
             ),
             reverse=True,
         )

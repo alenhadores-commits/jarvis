@@ -1,16 +1,32 @@
 ﻿import requests
+import unicodedata
 
 
 FREE_SERP_URL = "https://freeserp.ai/api.php"
 
 
+def normalizar(texto: str) -> str:
+    texto = str(texto or "").lower()
+    texto = unicodedata.normalize(
+        "NFKD",
+        texto,
+    )
+    return "".join(
+        c
+        for c in texto
+        if not unicodedata.combining(c)
+    )
+
+
 def deve_pesquisar(mensagem: str) -> bool:
     texto = str(
         mensagem or ""
-    ).strip().lower()
+    ).strip()
 
     if not texto:
         return False
+
+    normalizado = normalizar(texto)
 
     pessoais = (
         "meu nome",
@@ -18,7 +34,7 @@ def deve_pesquisar(mensagem: str) -> bool:
         "minha cor",
         "minha esposa",
         "meu trabalho",
-        "minha profissão",
+        "minha profissao",
         "o que eu gosto",
         "qual meu",
         "qual minha",
@@ -26,46 +42,51 @@ def deve_pesquisar(mensagem: str) -> bool:
     )
 
     if any(
-        item in texto
+        item in normalizado
         for item in pessoais
     ):
         return False
 
+    # Perguntas factuais comuns.
     gatilhos = (
-        "quem foi",
-        "quem é",
-        "o que é",
-        "o que foi",
-        "como funciona",
-        "quando aconteceu",
-        "onde fica",
-        "por que",
-        "porque",
-        "qual é",
-        "qual foi",
-        "qual a",
-        "qual o",
-        "sobre ",
+        "quem ",
+        "qual ",
+        "onde ",
+        "quando ",
+        "como ",
+        "por que ",
+        "porque ",
+        "o que ",
         "pesquise",
         "pesquisa",
         "procure",
-        "notícia",
+        "noticia",
         "noticias",
         "atual",
         "hoje",
         "agora",
-        "último",
-        "última",
-        "mais recente",
+        "ultimo",
+        "ultima",
+        "proximo",
+        "proxima",
+        "jogo",
+        "partida",
+        "palmeiras",
+        "corinthians",
+        "flamengo",
+        "futebol",
     )
 
     if any(
-        gatilho in texto
+        gatilho in normalizado
         for gatilho in gatilhos
     ):
         return True
 
-    return "?" in texto
+    if "?" in texto:
+        return True
+
+    return False
 
 
 def pesquisar_web(
@@ -93,17 +114,9 @@ def pesquisar_web(
 
         dados = resposta.json()
 
-        if not isinstance(
-            dados,
-            dict,
-        ):
-            return []
-
-        resultados_brutos = (
-            dados.get("results")
-            or dados.get("data")
-            or dados.get("items")
-            or []
+        resultados_brutos = dados.get(
+            "results",
+            [],
         )
 
         if not isinstance(
@@ -124,28 +137,22 @@ def pesquisar_web(
             titulo = str(
                 item.get(
                     "title",
-                    item.get(
-                        "name",
-                        "",
-                    ),
+                    "",
                 )
             ).strip()
 
             url = str(
                 item.get(
                     "url",
-                    item.get(
-                        "link",
-                        "",
-                    ),
+                    "",
                 )
             ).strip()
 
             resumo = str(
                 item.get(
-                    "summary",
+                    "ai_summary",
                     item.get(
-                        "snippet",
+                        "summary",
                         item.get(
                             "description",
                             "",
@@ -161,9 +168,9 @@ def pesquisar_web(
                 )
             ).strip()
 
-            data_publicacao = str(
+            publicada = str(
                 item.get(
-                    "published_at",
+                    "went_live",
                     item.get(
                         "published",
                         item.get(
@@ -186,12 +193,15 @@ def pesquisar_web(
                 "url": url,
                 "description": resumo,
                 "domain": dominio,
-                "published": data_publicacao,
+                "published": publicada,
             })
 
         return resultados
 
-    except Exception:
+    except Exception as erro:
+        print(
+            f"JARVIS WEB: falha FreeSerp: {erro}"
+        )
         return []
 
 
@@ -203,10 +213,10 @@ def montar_contexto_web(
 
     partes = [
         "CONTEXTO DE PESQUISA WEB DO J.A.R.V.I.S.",
-        "Abaixo estão resultados do FreeSerp.",
-        "Use-os como fonte externa para responder.",
-        "Não invente informações que não estejam "
-        "presentes nas fontes.",
+        "Os resultados abaixo vieram do FreeSerp.",
+        "Use-os para responder perguntas sobre fatos externos.",
+        "Quando houver fontes, baseie a resposta nelas.",
+        "Não invente dados que não estejam nas fontes.",
         "",
     ]
 
@@ -214,53 +224,29 @@ def montar_contexto_web(
         resultados,
         start=1,
     ):
-        titulo = item.get(
-            "title",
-            "",
-        )
-
-        url = item.get(
-            "url",
-            "",
-        )
-
-        resumo = item.get(
-            "description",
-            "",
-        )
-
-        dominio = item.get(
-            "domain",
-            "",
-        )
-
-        publicada = item.get(
-            "published",
-            "",
-        )
-
         partes.append(
-            f"[FONTE {indice}] {titulo}"
+            f"[FONTE {indice}] "
+            f"{item.get('title', '')}"
         )
 
-        if dominio:
+        if item.get("domain"):
             partes.append(
-                f"Domínio: {dominio}"
+                f"Domínio: {item['domain']}"
             )
 
-        if publicada:
+        if item.get("published"):
             partes.append(
-                f"Data: {publicada}"
+                f"Data: {item['published']}"
             )
 
-        if url:
+        if item.get("url"):
             partes.append(
-                f"URL: {url}"
+                f"URL: {item['url']}"
             )
 
-        if resumo:
+        if item.get("description"):
             partes.append(
-                f"Resumo: {resumo}"
+                f"Resumo: {item['description']}"
             )
 
         partes.append("")
