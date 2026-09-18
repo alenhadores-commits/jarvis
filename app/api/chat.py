@@ -6,9 +6,11 @@ import requests
 from JARVIS_BASE.memoria_classificador import classificar_memoria
 from app.core.memoria_persistente import MemoriaPersistente
 from app.core.pesquisa_web import (
+    consulta_evento_futuro,
     deve_pesquisar,
     montar_contexto_web,
     pesquisar_web,
+    verificar_atualidade,
 )
 
 router = APIRouter(
@@ -184,11 +186,12 @@ def chat(
         recuperar_memoria(mensagem)
     )
 
+    contexto_sistema = []
+
     if contexto_memoria:
-        mensagens.append({
-            "role": "system",
-            "content": contexto_memoria,
-        })
+        contexto_sistema.append(
+            contexto_memoria
+        )
 
     contexto_web = ""
 
@@ -198,15 +201,82 @@ def chat(
             limite=5,
         )
 
+        # Eventos futuros nao dependem da data de publicacao da fonte.
+        # Consultas de atualidade/passado recente continuam exigindo fontes recentes.
+        exige_atualidade = (
+            not consulta_evento_futuro(mensagem)
+            and any(
+                palavra in mensagem.lower()
+                for palavra in (
+                    "hoje",
+                    "agora",
+                    "atual",
+                    "atualmente",
+                    "ultimo",
+                    "último",
+                    "ultima",
+                    "última",
+                    "ontem",
+                )
+            )
+        )
+
+        if (
+            exige_atualidade
+            and resultados_web
+            and not verificar_atualidade(
+                resultados_web,
+                dias_maximos=7,
+            )
+        ):
+            datas = sorted(
+                {
+                    str(
+                        item.get(
+                            "source_date",
+                            "",
+                        )
+                    ).strip()
+                    for item in resultados_web
+                    if item.get(
+                        "source_date",
+                        "",
+                    )
+                }
+            )
+
+            ultima_data = (
+                datas[-1]
+                if datas
+                else "desconhecida"
+            )
+
+            return ChatResponse(
+                response=(
+                    "Encontrei fontes sobre esse assunto, "
+                    "mas a informação disponível está "
+                    f"desatualizada. A fonte mais recente "
+                    f"encontrada é de {ultima_data}. "
+                    "Não vou inventar o dado atual."
+                )
+            )
+
         contexto_web = montar_contexto_web(
             resultados_web
         )
 
         if contexto_web:
-            mensagens.append({
-                "role": "system",
-                "content": contexto_web,
-            })
+            contexto_sistema.append(
+                contexto_web
+            )
+
+    if contexto_sistema:
+        mensagens.append({
+            "role": "system",
+            "content": "\n\n".join(
+                contexto_sistema
+            ),
+        })
 
     mensagens.append({
         "role": "user",
@@ -264,3 +334,6 @@ def chat(
                 f"o IA Router: {erro}"
             ),
         )
+
+
+

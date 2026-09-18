@@ -40,7 +40,7 @@ DIALOGUE_MAX_CHARS = int(
 )
 
 DIALOGUE_MAX_OUTPUT = int(
-    os.getenv("ROUTER_DIALOGUE_MAX_OUTPUT", "96")
+    os.getenv("ROUTER_DIALOGUE_MAX_OUTPUT", "700")
 )
 
 QUOTA_ALERT_PERCENT = float(
@@ -789,31 +789,83 @@ def normalize_content(value: Any) -> str:
 
 def compact_dialogue_text(value: Any, max_chars: int = DIALOGUE_MAX_CHARS) -> str:
     text = normalize_content(value)
+    text = re.sub(r"\s+", " ", text).strip()
 
-    text = re.sub(r"\\s+", " ", text).strip()
+    if max_chars <= 0:
+        return ""
 
     if len(text) <= max_chars:
         return text
 
-    first = int(max_chars * 0.72)
-    last = max_chars - first
+    marker = " ... "
+
+    if max_chars <= len(marker):
+        return text[:max_chars]
+
+    available = max_chars - len(marker)
+    first = int(available * 0.72)
+    last = available - first
 
     return (
         text[:first].rstrip()
-        + " ... "
+        + marker
         + text[-last:].lstrip()
     )
-
-
 def prepare_dialogue_messages(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+
+    def compact_inicio(texto: str, limite: int) -> str:
+        texto = re.sub(r"\s+", " ", str(texto)).strip()
+
+        if limite <= 0:
+            return ""
+
+        if len(texto) <= limite:
+            return texto
+
+        marcador = " ... "
+
+        if limite <= len(marcador):
+            return texto[:limite]
+
+        disponivel = limite - len(marcador)
+
+        return texto[:disponivel].rstrip() + marcador
+
+    def extrair_blocos_estilo(texto: str) -> dict[str, str]:
+        linhas = texto.splitlines()
+        blocos = {}
+        inicio = None
+        titulo = None
+
+        for i, linha in enumerate(linhas):
+            t = linha.strip()
+
+            if t.isupper() and len(t) >= 4:
+                if titulo is not None:
+                    blocos[titulo] = "\n".join(
+                        linhas[inicio:i]
+                    ).strip()
+
+                titulo = t
+                inicio = i
+
+        if titulo is not None:
+            blocos[titulo] = "\n".join(
+                linhas[inicio:]
+            ).strip()
+
+        return blocos
 
     if not messages:
         return [
             {
                 "role": "system",
-                "content": DIALOGUE_STYLE,
+                "content": compact_inicio(
+                    DIALOGUE_STYLE,
+                    DIALOGUE_MAX_CHARS,
+                ),
             }
         ]
 
@@ -822,7 +874,9 @@ def prepare_dialogue_messages(
 
     for message in messages:
         role = str(message.get("role", "user"))
-        content = compact_dialogue_text(message.get("content", ""))
+        content = compact_dialogue_text(
+            message.get("content", "")
+        )
 
         if not content:
             continue
@@ -839,33 +893,127 @@ def prepare_dialogue_messages(
 
     dialogue_messages = dialogue_messages[-DIALOGUE_MAX_MESSAGES:]
 
+    limite_total = DIALOGUE_MAX_CHARS
+
+    blocos = extrair_blocos_estilo(DIALOGUE_STYLE)
+
+    personalidade = blocos.get(
+        "PERSONALIDADE",
+        DIALOGUE_STYLE,
+    )
+
+    regra_resposta = blocos.get(
+        "REGRA DE RESPOSTA",
+        "",
+    )
+
+    regras_web = blocos.get(
+        "REGRAS PARA PESQUISA WEB",
+        "",
+    )
+
+    contexto_original = ""
+
     if system_messages:
-        system = compact_dialogue_text(
-            system_messages[0].get("content", ""),
-            max_chars=min(3000, DIALOGUE_MAX_CHARS * 2),
+        contexto_original = system_messages[0].get(
+            "content",
+            "",
         )
 
-        system = f"{system}\n\n{DIALOGUE_STYLE}"
+    possui_contexto_web = bool(
+        contexto_original.strip()
+    )
 
-        result = [
-            {
-                "role": "system",
-                "content": system,
-            }
+    if possui_contexto_web:
+        limite_personalidade = 300
+        limite_resposta = 200
+        limite_web = 200
+        separadores = 3
+
+        limite_contexto = (
+            limite_total
+            - limite_personalidade
+            - limite_resposta
+            - limite_web
+            - separadores
+        )
+
+        p = compact_inicio(
+            personalidade,
+            limite_personalidade,
+        )
+
+        r = compact_inicio(
+            regra_resposta,
+            limite_resposta,
+        )
+
+        w = compact_inicio(
+            regras_web,
+            limite_web,
+        )
+
+        c = compact_inicio(
+            contexto_original,
+            max(0, limite_contexto),
+        )
+
+        partes = [
+            x
+            for x in [p, r, w, c]
+            if x
         ]
 
-        result.extend(dialogue_messages)
-        return result
+        system = "\n".join(partes)
 
-    return [
+    else:
+        limite_personalidade = 500
+        limite_resposta = 400
+        separadores = 2
+
+        limite_web = (
+            limite_total
+            - limite_personalidade
+            - limite_resposta
+            - separadores
+        )
+
+        p = compact_inicio(
+            personalidade,
+            limite_personalidade,
+        )
+
+        r = compact_inicio(
+            regra_resposta,
+            limite_resposta,
+        )
+
+        w = compact_inicio(
+            regras_web,
+            max(0, limite_web),
+        )
+
+        partes = [
+            x
+            for x in [p, r, w]
+            if x
+        ]
+
+        system = "\n".join(partes)
+
+    if len(system) > limite_total:
+        system = system[:limite_total]
+
+    result = [
         {
             "role": "system",
-            "content": DIALOGUE_STYLE,
-        },
-        *dialogue_messages,
+            "content": system,
+        }
     ]
 
+    result.extend(dialogue_messages)
 
+    return result
 def estimate_tokens(text: str) -> int:
     if not text:
         return 0
@@ -893,11 +1041,11 @@ def economy_max_tokens(
     prompt_tokens = total_message_tokens(messages)
 
     if prompt_tokens <= 120:
-        ceiling = 64
+        ceiling = 256
     elif prompt_tokens <= 500:
-        ceiling = 96
+        ceiling = 384
     else:
-        ceiling = 128
+        ceiling = 700
 
     return min(requested, ceiling)
 
