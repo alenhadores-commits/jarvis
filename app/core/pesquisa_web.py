@@ -737,12 +737,17 @@ def pesquisar_web(
     consulta: str,
     limite: int = 5,
 ) -> list[dict]:
-    consultas = preparar_consulta(consulta)
+
+    consultas = preparar_consulta(
+        consulta
+    )
 
     if not consultas:
         return []
 
-    candidatos = []
+    from app.core.pesquisa_provedores import (
+        pesquisar_com_fallback,
+    )
 
     termos_busca = [
         re.sub(
@@ -791,249 +796,76 @@ def pesquisar_web(
         }
     ]
 
-    for tentativa, consulta_teste in enumerate(
-        consultas,
-        start=1,
-    ):
-        try:
-            resposta = requests.get(
-                FREE_SERP_URL,
-                params={
-                    "q": consulta_teste,
-                    "size": max(limite, 10),
-                "content": 1,
-                "content_max": 12000,
-                },
-                timeout=20,
-            )
-
-            resposta.raise_for_status()
-
-            dados = resposta.json()
-
-            resultados_brutos = dados.get(
-                "results",
-                [],
-            )
-
-            if not isinstance(
-                resultados_brutos,
-                list,
-            ):
-                continue
-
-            for item in resultados_brutos:
-                if not isinstance(item, dict):
-                    continue
-
-                titulo = str(
-                    item.get(
-                        "title",
-                        "",
-                    )
-                ).strip()
-
-                url = str(
-                    item.get(
-                        "url",
-                        "",
-                    )
-                ).strip()
-
-                conteudo = str(
-                    item.get(
-                        "content",
-                        "",
-                    )
-                ).strip()
-
-                resumo = str(
-                    item.get(
-                        "ai_summary",
-                        item.get(
-                            "summary",
-                            item.get(
-                                "description",
-                                "",
-                            ),
-                        ),
-                    )
-                ).strip()
-
-                dominio = str(
-                    item.get(
-                        "domain",
-                        "",
-                    )
-                ).strip()
-
-                publicada = str(
-                    item.get(
-                        "published",
-                        item.get(
-                            "date",
-                            item.get(
-                                "went_live",
-                                "",
-                            ),
-                        ),
-                    )
-                ).strip()
-
-                if not (
-                    titulo
-                    or url
-                    or resumo
-                ):
-                    continue
-
-                resultado = {
-                    "title": titulo,
-                    "url": url,
-                    "description": resumo,
-                    "content": conteudo,
-                    "domain": dominio,
-                    "published": publicada,
-                    "source_date": publicada,
-                }
-
-                resultado["_score"] = pontuar_resultado(
-                    resultado,
-                    termos_busca,
-                )
-
-                candidatos.append(
-                    resultado
-                )
-
-        except Exception as erro:
-            print(
-                f"JARVIS WEB: falha FreeSerp: {erro}"
-            )
-
-    if not candidatos or (
-        consulta_temporal(consulta)
-        and not consulta_evento_futuro(consulta)
-        and not verificar_atualidade(
-            candidatos,
-            dias_maximos=7,
+    temporal = (
+        consulta_temporal(
+            consulta
         )
-    ):
-        try:
-            news = pesquisar_google_news(
-                consulta,
-                limite=max(limite, 10),
-            )
+        and not consulta_evento_futuro(
+            consulta
+        )
+    )
 
-            for item in news:
-                texto_item = normalizar(
-                    " ".join(
-                        [
-                            str(item.get("title", "")),
-                            str(item.get("description", "")),
-                            str(item.get("domain", "")),
-                        ]
-                    )
-                )
-
-                termos_fortes = [
-                    termo
-                    for termo in termos_busca
-                    if termo not in {
-                        "proximo",
-                        "proxima",
-                        "ultimo",
-                        "ultima",
-                        "hoje",
-                        "agora",
-                        "atual",
-                        "jogo",
-                        "partida",
-                        "futebol",
-                    }
-                ]
-
-                if termos_fortes and not any(
-                    termo in texto_item
-                    for termo in termos_fortes
-                ):
-                    continue
-
-                score = pontuar_resultado(
-                    item,
-                    termos_busca,
-                ) + 25
-
-                if item.get("source_date"):
-                    try:
-                        from datetime import datetime
-
-                        hoje = datetime.now().date()
-
-                        data_fonte = datetime.fromisoformat(
-                            str(item["source_date"])[:10]
-                        ).date()
-
-                        idade = max(
-                            0,
-                            (hoje - data_fonte).days,
-                        )
-
-                        score += max(
-                            0,
-                            100 - (idade * 10),
-                        )
-                    except Exception:
-                        pass
-
-                item["_score"] = score
-                candidatos.append(item)
-
-            if news:
-                print(
-                    "JARVIS WEB: fallback Google News -> "
-                    f"{len(news)}"
-                )
-
-        except Exception as erro:
-            print(
-                f"JARVIS WEB: falha Google News: {erro}"
-            )
+    candidatos = pesquisar_com_fallback(
+        consultas=consultas,
+        limite=limite,
+        temporal=temporal,
+        verificar_atualidade=verificar_atualidade,
+    )
 
     if not candidatos:
         return []
 
-    # Remove URLs duplicadas.
+    # ========================================================
+    # RANKING
+    # ========================================================
+
+    for item in candidatos:
+
+        item["_score"] = pontuar_resultado(
+            item,
+            termos_busca,
+        )
+
+    # ========================================================
+    # DEDUPLICACAO
+    # ========================================================
+
     unicos = {}
 
     for item in candidatos:
-        url = item.get(
-            "url",
-            "",
+
+        url = str(
+            item.get(
+                "url",
+                "",
+            )
         ).strip()
 
         chave = (
             url.lower()
             if url
-            else (
+            else str(
                 item.get(
                     "title",
                     "",
-                ).strip().lower()
-            )
+                )
+            ).strip().lower()
         )
 
         if not chave:
             continue
 
-        anterior = unicos.get(chave)
+        anterior = unicos.get(
+            chave
+        )
 
         if (
             anterior is None
             or item.get(
                 "_score",
                 0,
-            ) > anterior.get(
+            )
+            > anterior.get(
                 "_score",
                 0,
             )
@@ -1044,26 +876,51 @@ def pesquisar_web(
         unicos.values()
     )
 
-    # Consultas temporais devem usar somente fontes recentes.
-    # Perguntas históricas/conceituais continuam aceitando fontes antigas.
-    if consulta_temporal(consulta) and not consulta_evento_futuro(consulta):
-        candidatos_recentes = verificar_atualidade(
-            candidatos,
-            dias_maximos=7,
+    # ========================================================
+    # FILTRO TEMPORAL
+    # ========================================================
+
+    if (
+        consulta_temporal(
+            consulta
+        )
+        and not consulta_evento_futuro(
+            consulta
+        )
+    ):
+
+        candidatos_recentes = (
+            verificar_atualidade(
+                candidatos,
+                dias_maximos=7,
+            )
         )
 
         if candidatos_recentes:
-            candidatos = candidatos_recentes
-            print(
-                "JARVIS WEB: filtro temporal -> "
-                f"{len(candidatos)} fontes recentes"
+
+            candidatos = (
+                candidatos_recentes
             )
+
+            print(
+                "JARVIS WEB: filtro "
+                "temporal -> "
+                f"{len(candidatos)} "
+                "fontes recentes"
+            )
+
         else:
+
             print(
-                "JARVIS WEB: nenhuma fonte recente "
-                "encontrada para consulta temporal"
+                "JARVIS WEB: nenhuma "
+                "fonte recente encontrada"
             )
+
             return []
+
+    # ========================================================
+    # ORDENACAO FINAL
+    # ========================================================
 
     candidatos.sort(
         key=lambda item: item.get(
@@ -1076,28 +933,32 @@ def pesquisar_web(
     resultados_finais = []
 
     for item in candidatos[:limite]:
+
         item.pop(
             "_score",
             None,
         )
+
         item.pop(
             "_idade_dias",
             None,
         )
+
         resultados_finais.append(
             item
         )
 
-    if resultados_finais:
-        print(
-            "JARVIS WEB: resultados "
-            f"selecionados -> {len(resultados_finais)}"
-        )
+    print(
+        "JARVIS WEB: resultados "
+        f"selecionados -> "
+        f"{len(resultados_finais)}"
+    )
 
     return resultados_finais
 
 def montar_contexto_web(
     resultados: list[dict],
+    consulta: str = "",
 ) -> str:
     if not resultados:
         return ""
@@ -1105,6 +966,10 @@ def montar_contexto_web(
     hoje = datetime.now(
         timezone.utc
     ).date()
+
+    evento_futuro = consulta_evento_futuro(
+        consulta
+    )
 
     fontes_recentes = verificar_atualidade(
         resultados,
@@ -1114,11 +979,21 @@ def montar_contexto_web(
     partes = [
         "CONTEXTO DE PESQUISA WEB DO J.A.R.V.I.S.",
         f"Data atual de referência: {hoje.isoformat()}",
-        "Os dados abaixo foram obtidos pelo FreeSerp.",
+        "Os dados abaixo foram obtidos por pesquisa web.",
         "",
     ]
 
-    if fontes_recentes:
+    if evento_futuro:
+        partes.extend([
+            "A consulta trata de um evento futuro.",
+            "A idade da publicação da fonte não significa que "
+            "o evento futuro esteja desatualizado.",
+            "Use as informações encontradas para identificar "
+            "o próximo evento.",
+            "Não invente informações ausentes.",
+            "",
+        ])
+    elif fontes_recentes:
         partes.extend([
             "As fontes possuem atualização recente.",
             "Use os dados encontrados para responder.",
@@ -1195,10 +1070,6 @@ def montar_contexto_web(
         partes.append("")
 
     return "\n".join(partes)
-
-
-
-
 
 
 
