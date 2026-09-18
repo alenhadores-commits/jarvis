@@ -1,97 +1,395 @@
 ﻿import os
+import re
+import unicodedata
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import requests
 
 
-UNLOB_URL = "https://api.unlob.com/search"
-FREE_SERP_URL = "https://freeserp.ai/api.php"
-
-
-# ============================================================
-# UTILITARIOS
-# ============================================================
-
-def _texto(valor) -> str:
-    return str(valor or "").strip()
-
-
-def _data_unlob(valor) -> str:
-    if valor in (None, ""):
+def _texto(valor):
+    if valor is None:
         return ""
+    return str(valor).strip()
+
+
+def _data_unlob(valor):
+    if not valor:
+        return None
+
+    texto = _texto(valor)
 
     try:
-        if isinstance(valor, (int, float)):
-            return datetime.fromtimestamp(
-                float(valor),
-                tz=timezone.utc,
-            ).date().isoformat()
+        if texto.endswith("Z"):
+            texto = texto[:-1] + "+00:00"
 
-        texto = str(valor).strip()
+        data = datetime.fromisoformat(texto)
 
-        if texto.isdigit():
-            return datetime.fromtimestamp(
-                float(texto),
-                tz=timezone.utc,
-            ).date().isoformat()
+        if data.tzinfo is None:
+            data = data.replace(tzinfo=timezone.utc)
 
-        return texto[:10]
+        return data
+    except Exception:
+        return None
 
+
+def _dominio(url):
+    try:
+        return urlparse(_texto(url)).netloc.lower()
     except Exception:
         return ""
 
 
-def _dominio(
-    url: str,
-    fallback: str = "",
-) -> str:
-    if fallback:
-        return fallback.strip()
-
-    try:
-        return urlparse(url).netloc
-    except Exception:
-        return ""
-
-
-def _valido(item: dict) -> bool:
+def _valido(item):
     if not isinstance(item, dict):
         return False
 
-    return bool(
-        _texto(item.get("title"))
-        or _texto(item.get("url"))
-        or _texto(item.get("description"))
-        or _texto(item.get("content"))
+    url = _texto(item.get("url"))
+
+    if not url:
+        return False
+
+    if not url.startswith(("http://", "https://")):
+        return False
+
+    return True
+
+
+def _normalizar_texto(valor):
+    texto = _texto(valor).lower()
+
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(
+        caractere
+        for caractere in texto
+        if not unicodedata.combining(caractere)
+    )
+
+    texto = re.sub(r"[^a-z0-9\s]", " ", texto)
+    texto = re.sub(r"\s+", " ", texto)
+
+    return texto.strip()
+
+
+def _termos_relevantes(consulta):
+    stopwords = {
+        "qual",
+        "quais",
+        "que",
+        "quem",
+        "onde",
+        "quando",
+        "como",
+        "porque",
+        "por",
+        "para",
+        "com",
+        "sem",
+        "uma",
+        "umas",
+        "um",
+        "uns",
+        "o",
+        "a",
+        "os",
+        "as",
+        "do",
+        "da",
+        "dos",
+        "das",
+        "de",
+        "no",
+        "na",
+        "nos",
+        "nas",
+        "e",
+        "ou",
+        "em",
+        "ao",
+        "aos",
+        "se",
+        "me",
+        "te",
+        "seu",
+        "sua",
+        "seus",
+        "suas",
+        "proximo",
+        "proxima",
+        "atual",
+        "agora",
+        "hoje",
+    }
+
+    tokens = _normalizar_texto(consulta).split()
+
+    resultado = []
+
+    for token in tokens:
+        if len(token) < 3:
+            continue
+
+        if token in stopwords:
+            continue
+
+        if token not in resultado:
+            resultado.append(token)
+
+    return resultado
+
+
+def _texto_resultado(item):
+    partes = [
+        item.get("title"),
+        item.get("description"),
+        item.get("snippet"),
+        item.get("content"),
+        item.get("url"),
+        item.get("domain"),
+    ]
+
+    return _normalizar_texto(" ".join(_texto(parte) for parte in partes))
+
+
+def _pontuacao_relevancia(consulta, item):
+    termos = _termos_relevantes(consulta)
+
+    titulo = _normalizar_texto(item.get("title"))
+    descricao = _normalizar_texto(item.get("description"))
+    snippet = _normalizar_texto(item.get("snippet"))
+    conteudo = _normalizar_texto(item.get("content"))
+    url = _normalizar_texto(item.get("url"))
+
+    pontuacao = 0
+
+    for termo in termos:
+        if termo in titulo:
+            pontuacao += 4
+            continue
+
+        if termo in descricao or termo in snippet:
+            pontuacao += 2
+            continue
+
+        if termo in conteudo:
+            pontuacao += 1
+            continue
+
+        if termo in url:
+            pontuacao += 1
+
+    return pontuacao
+
+
+def _parece_consulta_evento_futuro(consulta):
+    texto = _normalizar_texto(consulta)
+
+    indicadores = {
+        "proximo",
+        "proxima",
+        "seguinte",
+        "proximos",
+        "proximas",
+        "quando sera",
+        "quando vai",
+        "quando acontece",
+        "data do",
+        "data da",
+        "horario do",
+        "horario da",
+    }
+
+    return any(indicador in texto for indicador in indicadores)
+
+
+def _tem_evidencia_evento_futuro(consulta, item):
+    texto = _texto_resultado(item)
+
+    if not texto:
+        return False
+
+    # Datas explícitas:
+    # 20/09/2026
+    # 20-09-2026
+    # 20.09.2026
+    data_numerica = re.search(
+        r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b",
+        texto,
+    )
+
+    # Datas por extenso:
+    # 20 setembro 2026
+    meses = (
+        "janeiro",
+        "fevereiro",
+        "marco",
+        "abril",
+        "maio",
+        "junho",
+        "julho",
+        "agosto",
+        "setembro",
+        "outubro",
+        "novembro",
+        "dezembro",
+    )
+
+    data_extenso = any(
+        re.search(
+            rf"\b\d{{1,2}}\s+{mes}\s+\d{{4}}\b",
+            texto,
+        )
+        for mes in meses
+    )
+
+    # Horários:
+    # 11:00 / 20h30 / 20h
+    horario = bool(
+        re.search(
+            r"\b\d{1,2}(?::\d{2}|h\d{0,2})\b",
+            texto,
+        )
+    )
+
+    indicadores_evento = [
+        "jogo",
+        "partida",
+        "confronto",
+        "enfrenta",
+        "enfrentara",
+        "x ",
+        "versus",
+        "vs ",
+        "estadio",
+        "arena",
+        "rodada",
+        "campeonato",
+        "competicao",
+        "show",
+        "evento",
+        "voo",
+        "embarque",
+        "chegada",
+    ]
+
+    possui_evento = any(
+        indicador in texto
+        for indicador in indicadores_evento
+    )
+
+    return (
+        (data_numerica or data_extenso or horario)
+        and possui_evento
     )
 
 
-# ============================================================
-# PROVEDOR 1 — UNLOB
-# ============================================================
+def _qualidade_resultados(consulta, resultados):
+    validos = [
+        item
+        for item in resultados
+        if _valido(item)
+    ]
+
+    if not validos:
+        return False, 0.0
+
+    termos = _termos_relevantes(consulta)
+
+    if not termos:
+        return True, 100.0
+
+    pontuacoes = [
+        _pontuacao_relevancia(consulta, item)
+        for item in validos
+    ]
+
+    relevantes = [
+        item
+        for item, pontuacao in zip(validos, pontuacoes)
+        if pontuacao >= 3
+    ]
+
+    percentual = (
+        len(relevantes) / len(validos)
+    ) * 100
+
+    melhor_pontuacao = max(
+        pontuacoes,
+        default=0,
+    )
+
+    if melhor_pontuacao < 3:
+        return False, percentual
+
+    # Para consultas sobre eventos futuros,
+    # relevância lexical sozinha não basta.
+    if _parece_consulta_evento_futuro(consulta):
+        evidencias = [
+            item
+            for item in relevantes
+            if _tem_evidencia_evento_futuro(
+                consulta,
+                item,
+            )
+        ]
+
+        percentual_evidencia = (
+            len(evidencias) / len(validos)
+        ) * 100
+
+        print(
+            "JARVIS WEB: "
+            f"Evidencia de evento -> "
+            f"{percentual_evidencia:.0f}%"
+        )
+
+        # Exige pelo menos uma evidência concreta
+        # e, com 3+ resultados, pelo menos 20%.
+        if not evidencias:
+            return False, percentual_evidencia
+
+        if len(validos) >= 3 and percentual_evidencia < 20:
+            return False, percentual_evidencia
+
+        return True, percentual_evidencia
+
+    if len(validos) >= 3 and percentual < 20:
+        return False, percentual
+
+    return True, percentual
+
+
+def _aceitar_resultados(consulta, resultados):
+    aprovado, percentual = _qualidade_resultados(
+        consulta,
+        resultados,
+    )
+
+    estado = "APROVADO" if aprovado else "REJEITADO"
+
+    print(
+        "JARVIS WEB: "
+        f"Quality Gate -> {estado} "
+        f"({percentual:.0f}% relevantes)"
+    )
+
+    return aprovado
+
 
 def pesquisar_unlob(
     consulta: str,
     limite: int = 5,
     dias: int | None = None,
-) -> list[dict]:
-
-    chave = os.getenv(
-        "UNLOB_API_KEY",
-        "",
-    ).strip()
+):
+    chave = os.getenv("UNLOB_API_KEY")
 
     if not chave:
-        print(
-            "JARVIS WEB: Unlob indisponivel "
-            "(UNLOB_API_KEY nao configurada)"
-        )
+        print("JARVIS WEB: Unlob -> API key ausente")
         return []
 
     try:
         resposta = requests.get(
-            UNLOB_URL,
+            "https://api.unlob.com/search",
             headers={
                 "x-api-key": chave,
             },
@@ -101,493 +399,343 @@ def pesquisar_unlob(
                 "limit": max(limite, 5),
                 "collapse": "page",
             },
-            timeout=20,
+            timeout=30,
         )
 
         resposta.raise_for_status()
 
         dados = resposta.json()
 
-        resultados = dados.get(
-            "results",
-            [],
-        )
+        if isinstance(dados, dict):
+            resultados_brutos = (
+                dados.get("results")
+                or dados.get("data")
+                or []
+            )
+        elif isinstance(dados, list):
+            resultados_brutos = dados
+        else:
+            resultados_brutos = []
 
-        if not isinstance(
-            resultados,
-            list,
-        ):
-            return []
+        resultados = []
 
-        finais = []
-
-        for item in resultados:
-
-            if not isinstance(
-                item,
-                dict,
-            ):
+        for item in resultados_brutos:
+            if not isinstance(item, dict):
                 continue
 
-            titulo = _texto(
-                item.get("title")
-            )
-
-            url = _texto(
+            url = (
                 item.get("url")
+                or item.get("link")
+                or ""
             )
 
-            descricao = _texto(
+            titulo = (
+                item.get("title")
+                or ""
+            )
+
+            descricao = (
                 item.get("snippet")
                 or item.get("description")
+                or ""
             )
 
-            dominio = _texto(
-                item.get("host")
+            resultados.append(
+                {
+                    "title": _texto(titulo),
+                    "url": _texto(url),
+                    "description": _texto(descricao),
+                    "snippet": _texto(
+                        item.get("snippet")
+                    ),
+                    "content": _texto(
+                        item.get("content")
+                    ),
+                    "domain": _dominio(url),
+                    "published_at": _data_unlob(
+                        item.get("published_at")
+                        or item.get("published")
+                        or item.get("date")
+                    ),
+                    "provider": "unlob",
+                    "fetched_at": datetime.now(
+                        timezone.utc
+                    ),
+                }
             )
 
-            publicada = _data_unlob(
-                item.get("published_at")
-            )
-
-            resultado = {
-                "title": titulo,
-                "url": url,
-                "description": descricao,
-                "content": descricao,
-                "domain": _dominio(
-                    url,
-                    dominio,
-                ),
-                "published": publicada,
-                "source_date": publicada,
-                "provider": "unlob",
-            }
-
-            if _valido(resultado):
-                finais.append(resultado)
-
-        print(
-            "JARVIS WEB: Unlob -> "
-            f"{len(finais)} resultados"
-        )
-
-        return finais[:limite]
+        return resultados
 
     except Exception as erro:
-
         print(
-            f"JARVIS WEB: falha Unlob: {erro}"
+            "JARVIS WEB: "
+            f"Unlob erro -> {erro}"
         )
-
         return []
 
-
-# ============================================================
-# PROVEDOR 2 — TAVILY
-# ============================================================
 
 def pesquisar_tavily(
     consulta: str,
     limite: int = 5,
     dias: int | None = None,
-) -> list[dict]:
-
-    chave = os.getenv(
-        "TAVILY_API_KEY",
-        "",
-    ).strip()
+):
+    chave = os.getenv("TAVILY_API_KEY")
 
     if not chave:
-        print(
-            "JARVIS WEB: Tavily indisponivel "
-            "(TAVILY_API_KEY nao configurada)"
-        )
+        print("JARVIS WEB: Tavily -> API key ausente")
         return []
 
     try:
-
         from tavily import TavilyClient
 
         cliente = TavilyClient(
             api_key=chave
         )
 
-        argumentos = {
+        parametros = {
             "query": consulta,
             "search_depth": "basic",
-            "max_results": max(
-                limite,
-                5,
-            ),
+            "max_results": max(limite, 5),
             "include_answer": False,
             "include_raw_content": False,
         }
 
         if dias is not None:
-            argumentos["days"] = dias
+            parametros["days"] = dias
 
-        dados = cliente.search(
-            **argumentos
+        resposta = cliente.search(
+            **parametros
         )
 
-        resultados = dados.get(
+        resultados = []
+
+        for item in resposta.get(
             "results",
             [],
-        )
-
-        if not isinstance(
-            resultados,
-            list,
         ):
-            return []
-
-        finais = []
-
-        for item in resultados:
-
-            if not isinstance(
-                item,
-                dict,
-            ):
-                continue
-
-            titulo = _texto(
-                item.get("title")
-            )
-
             url = _texto(
                 item.get("url")
             )
 
-            conteudo = _texto(
-                item.get("content")
+            resultados.append(
+                {
+                    "title": _texto(
+                        item.get("title")
+                    ),
+                    "url": url,
+                    "description": _texto(
+                        item.get("content")
+                    ),
+                    "snippet": _texto(
+                        item.get("content")
+                    ),
+                    "content": _texto(
+                        item.get("content")
+                    ),
+                    "domain": _dominio(url),
+                    "published_at": None,
+                    "provider": "tavily",
+                    "fetched_at": datetime.now(
+                        timezone.utc
+                    ),
+                }
             )
 
-            publicada = _texto(
-                item.get("published_date")
-            )
-
-            resultado = {
-                "title": titulo,
-                "url": url,
-                "description": conteudo,
-                "content": conteudo,
-                "domain": _dominio(url),
-                "published": publicada,
-                "source_date": publicada[:10],
-                "provider": "tavily",
-            }
-
-            if _valido(resultado):
-                finais.append(resultado)
-
-        print(
-            "JARVIS WEB: Tavily -> "
-            f"{len(finais)} resultados"
-        )
-
-        return finais[:limite]
+        return resultados
 
     except Exception as erro:
-
         print(
-            f"JARVIS WEB: falha Tavily: {erro}"
+            "JARVIS WEB: "
+            f"Tavily erro -> {erro}"
         )
-
         return []
 
-
-# ============================================================
-# PROVEDOR 3 — LANGCHAIN / DUCKDUCKGO
-# ============================================================
 
 def pesquisar_langchain(
     consulta: str,
     limite: int = 5,
     dias: int | None = None,
-) -> list[dict]:
-
+):
     try:
-
         from langchain_community.tools import (
             DuckDuckGoSearchResults,
         )
 
         ferramenta = DuckDuckGoSearchResults(
-            max_results=max(
-                limite,
-                5,
-            ),
-            output_format="list",
+            output_format="list"
         )
 
         dados = ferramenta.invoke(
             consulta
         )
 
-        if not isinstance(
-            dados,
-            list,
-        ):
+        if not isinstance(dados, list):
             return []
 
-        finais = []
+        resultados = []
 
-        for item in dados:
-
-            if not isinstance(
-                item,
-                dict,
-            ):
+        for item in dados[: max(limite, 5)]:
+            if not isinstance(item, dict):
                 continue
-
-            titulo = _texto(
-                item.get("title")
-            )
 
             url = _texto(
                 item.get("link")
                 or item.get("url")
             )
 
-            descricao = _texto(
-                item.get("snippet")
-                or item.get("description")
+            resultados.append(
+                {
+                    "title": _texto(
+                        item.get("title")
+                    ),
+                    "url": url,
+                    "description": _texto(
+                        item.get("snippet")
+                        or item.get("description")
+                    ),
+                    "snippet": _texto(
+                        item.get("snippet")
+                    ),
+                    "content": _texto(
+                        item.get("snippet")
+                    ),
+                    "domain": _dominio(url),
+                    "published_at": None,
+                    "provider": "langchain",
+                    "fetched_at": datetime.now(
+                        timezone.utc
+                    ),
+                }
             )
 
-            resultado = {
-                "title": titulo,
-                "url": url,
-                "description": descricao,
-                "content": descricao,
-                "domain": _dominio(url),
-                "published": "",
-                "source_date": "",
-                "provider": "langchain",
-            }
-
-            if _valido(resultado):
-                finais.append(resultado)
-
-        print(
-            "JARVIS WEB: LangChain/DuckDuckGo -> "
-            f"{len(finais)} resultados"
-        )
-
-        return finais[:limite]
+        return resultados
 
     except Exception as erro:
-
         print(
-            f"JARVIS WEB: falha LangChain: {erro}"
+            "JARVIS WEB: "
+            f"LangChain erro -> {erro}"
         )
-
         return []
 
-
-# ============================================================
-# PROVEDOR 4 — FREESERP
-# ============================================================
 
 def pesquisar_freeserp(
     consulta: str,
     limite: int = 5,
     dias: int | None = None,
-) -> list[dict]:
-
+):
     try:
-
         resposta = requests.get(
-            FREE_SERP_URL,
+            "https://freeserp.ai/api.php",
             params={
                 "q": consulta,
-                "size": max(
-                    limite,
-                    10,
-                ),
-                "content": 1,
-                "content_max": 12000,
             },
-            timeout=20,
+            timeout=30,
         )
 
         resposta.raise_for_status()
 
         dados = resposta.json()
 
-        resultados_brutos = dados.get(
-            "results",
-            [],
-        )
-
-        if not isinstance(
-            resultados_brutos,
-            list,
-        ):
-            return []
-
-        finais = []
-
-        for item in resultados_brutos:
-
-            if not isinstance(
-                item,
-                dict,
-            ):
-                continue
-
-            titulo = _texto(
-                item.get("title")
+        if isinstance(dados, dict):
+            brutos = (
+                dados.get("results")
+                or dados.get("organic_results")
+                or []
             )
+        elif isinstance(dados, list):
+            brutos = dados
+        else:
+            brutos = []
+
+        resultados = []
+
+        for item in brutos[: max(limite, 5)]:
+            if not isinstance(item, dict):
+                continue
 
             url = _texto(
                 item.get("url")
+                or item.get("link")
             )
 
-            conteudo = _texto(
-                item.get("content")
+            resultados.append(
+                {
+                    "title": _texto(
+                        item.get("title")
+                    ),
+                    "url": url,
+                    "description": _texto(
+                        item.get("snippet")
+                        or item.get("description")
+                    ),
+                    "snippet": _texto(
+                        item.get("snippet")
+                    ),
+                    "content": _texto(
+                        item.get("content")
+                    ),
+                    "domain": _dominio(url),
+                    "published_at": None,
+                    "provider": "freeserp",
+                    "fetched_at": datetime.now(
+                        timezone.utc
+                    ),
+                }
             )
 
-            resumo = _texto(
-                item.get("ai_summary")
-                or item.get("summary")
-                or item.get("description")
-            )
-
-            dominio = _texto(
-                item.get("domain")
-            )
-
-            publicada = _texto(
-                item.get("published")
-                or item.get("date")
-                or item.get("went_live")
-            )
-
-            resultado = {
-                "title": titulo,
-                "url": url,
-                "description": resumo,
-                "content": conteudo,
-                "domain": _dominio(
-                    url,
-                    dominio,
-                ),
-                "published": publicada,
-                "source_date": publicada,
-                "provider": "freeserp",
-            }
-
-            if _valido(resultado):
-                finais.append(resultado)
-
-        print(
-            "JARVIS WEB: FreeSerp -> "
-            f"{len(finais)} resultados"
-        )
-
-        return finais[:limite]
+        return resultados
 
     except Exception as erro:
-
         print(
-            f"JARVIS WEB: falha FreeSerp: {erro}"
+            "JARVIS WEB: "
+            f"FreeSerp erro -> {erro}"
         )
-
         return []
 
 
-# ============================================================
-# REGISTRO CENTRAL
-# ============================================================
-#
-# A ORDEM DEFINE O FALLBACK.
-#
-# Para adicionar outro provedor:
-#
-# 1. crie pesquisar_novo_provedor()
-# 2. garanta a assinatura:
-#
-#       consulta
-#       limite
-#       dias
-#
-# 3. adicione UMA linha abaixo.
-#
-# NENHUMA alteracao em pesquisa_web.py sera necessaria.
-# ============================================================
-
 PROVEDORES = [
-    (
-        "Unlob",
-        pesquisar_unlob,
-    ),
-    (
-        "Tavily",
-        pesquisar_tavily,
-    ),
-    (
-        "LangChain",
-        pesquisar_langchain,
-    ),
-    (
-        "FreeSerp",
-        pesquisar_freeserp,
-    ),
+    ("Unlob", pesquisar_unlob),
+    ("Tavily", pesquisar_tavily),
+    ("LangChain", pesquisar_langchain),
+    ("FreeSerp", pesquisar_freeserp),
 ]
 
 
-# ============================================================
-# EXECUTOR GENERICO DE FALLBACK
-# ============================================================
-
 def pesquisar_com_fallback(
-    consultas: list[str],
+    consultas,
     limite: int = 5,
     temporal: bool = False,
     verificar_atualidade=None,
-) -> list[dict]:
-
-    limite_busca = max(
-        limite,
-        10,
-    )
-
-    dias = (
-        7
-        if temporal
-        else None
-    )
-
-    for nome, funcao in PROVEDORES:
-
-        print(
-            "JARVIS WEB: tentando provedor -> "
-            f"{nome}"
-        )
-
-        for consulta in consultas:
+):
+    for consulta in consultas:
+        for nome, funcao in PROVEDORES:
+            print(
+                "JARVIS WEB: "
+                f"tentando provedor -> {nome}"
+            )
 
             try:
-
                 resultados = funcao(
                     consulta,
-                    limite=limite_busca,
-                    dias=dias,
+                    limite=limite,
                 )
-
+            except TypeError:
+                resultados = funcao(
+                    consulta,
+                    limite,
+                )
             except Exception as erro:
-
                 print(
-                    "JARVIS WEB: erro no "
-                    f"provedor {nome}: {erro}"
+                    "JARVIS WEB: "
+                    f"{nome} erro -> {erro}"
                 )
-
-                resultados = []
-
-            if not resultados:
                 continue
+
+            print(
+                "JARVIS WEB: "
+                f"{nome} -> "
+                f"{len(resultados)} resultados"
+            )
 
             validos = [
                 item
@@ -596,47 +744,62 @@ def pesquisar_com_fallback(
             ]
 
             if not validos:
+                print(
+                    "JARVIS WEB: "
+                    f"{nome} sem resultados validos"
+                )
+                continue
+
+            if not _aceitar_resultados(
+                consulta,
+                validos,
+            ):
+                print(
+                    "JARVIS WEB: "
+                    f"{nome} rejeitado pelo "
+                    "Quality Gate"
+                )
                 continue
 
             if (
                 temporal
                 and verificar_atualidade is not None
-                and not verificar_atualidade(
-                    validos,
-                    dias_maximos=7,
-                )
             ):
+                try:
+                    atual = verificar_atualidade(
+                        validos,
+                        dias_maximos=7,
+                    )
+                except TypeError:
+                    atual = verificar_atualidade(
+                        validos
+                    )
+                except Exception as erro:
+                    print(
+                        "JARVIS WEB: "
+                        "erro verificando atualidade -> "
+                        f"{erro}"
+                    )
+                    atual = False
 
-                print(
-                    "JARVIS WEB: "
-                    f"{nome} retornou "
-                    "fontes desatualizadas"
-                )
-
-                continue
+                if not atual:
+                    print(
+                        "JARVIS WEB: "
+                        f"{nome} rejeitado por "
+                        "atualidade"
+                    )
+                    continue
 
             print(
-                "JARVIS WEB: provedor "
-                "selecionado -> "
-                f"{nome}"
+                "JARVIS WEB: "
+                f"provedor selecionado -> {nome}"
             )
 
-            return validos
+            return validos[:limite]
 
     print(
-        "JARVIS WEB: nenhum provedor "
-        "retornou resultados validos"
+        "JARVIS WEB: "
+        "nenhum provedor conseguiu resultados validos"
     )
 
     return []
-
-
-# ============================================================
-# INFORMACAO DO REGISTRO
-# ============================================================
-
-def listar_provedores() -> list[str]:
-    return [
-        nome
-        for nome, _ in PROVEDORES
-    ]

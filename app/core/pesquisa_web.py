@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timezone
+from datetime import datetime, timezone
 import re
 import requests
 import unicodedata
@@ -956,6 +956,336 @@ def pesquisar_web(
 
     return resultados_finais
 
+def _extrair_primeiro_evento_futuro(
+    texto: str,
+    hoje,
+):
+    padrao = re.compile(
+        r"(?<!\d)"
+        r"(\d{1,2})[/-]"
+        r"(\d{1,2})"
+        r"(?:[/-](20\d{2}))?"
+        r"(?!\d)"
+    )
+
+    candidatos = []
+
+    for correspondencia in padrao.finditer(texto):
+        dia = int(correspondencia.group(1))
+        mes = int(correspondencia.group(2))
+        ano_texto = correspondencia.group(3)
+
+        if ano_texto:
+            ano = int(ano_texto)
+        else:
+            # Para datas sem ano, tenta associar o ano mais
+            # pr?ximo no pr?prio trecho da fonte.
+            inicio = max(
+                0,
+                correspondencia.start() - 180,
+            )
+
+            fim = min(
+                len(texto),
+                correspondencia.end() + 180,
+            )
+
+            janela = texto[
+                inicio:fim
+            ]
+
+            anos = []
+
+            for ano_match in re.finditer(
+                r"\b(20\d{2})\b",
+                janela,
+            ):
+                anos.append(
+                    (
+                        abs(
+                            (
+                                inicio
+                                + ano_match.start()
+                            )
+                            - correspondencia.start()
+                        ),
+                        int(
+                            ano_match.group(1)
+                        ),
+                    )
+                )
+
+            if anos:
+                anos.sort(
+                    key=lambda item: item[0]
+                )
+
+                ano = anos[0][1]
+            else:
+                ano = hoje.year
+
+        try:
+            data_evento = datetime(
+                ano,
+                mes,
+                dia,
+                tzinfo=timezone.utc,
+            ).date()
+        except ValueError:
+            continue
+
+        if data_evento < hoje:
+            continue
+
+        candidatos.append(
+            (
+                data_evento,
+                correspondencia.start(),
+                correspondencia.end(),
+            )
+        )
+
+    if not candidatos:
+        return None
+
+    candidatos.sort(
+        key=lambda item: (
+            item[0],
+            item[1],
+        )
+    )
+
+    return candidatos[0]
+
+
+def _limpar_datas_do_trecho(
+    trecho: str,
+    hoje,
+    data_selecionada,
+):
+    padrao = re.compile(
+        r"(?<!\d)"
+        r"(\d{1,2})[/-]"
+        r"(\d{1,2})"
+        r"(?:[/-](20\d{2}))?"
+        r"(?!\d)"
+    )
+
+    def substituir(
+        correspondencia,
+    ):
+        dia = int(
+            correspondencia.group(1)
+        )
+
+        mes = int(
+            correspondencia.group(2)
+        )
+
+        ano_texto = correspondencia.group(3)
+
+        ano = (
+            int(ano_texto)
+            if ano_texto
+            else hoje.year
+        )
+
+        try:
+            data_encontrada = datetime(
+                ano,
+                mes,
+                dia,
+                tzinfo=timezone.utc,
+            ).date()
+        except ValueError:
+            return "[data omitida]"
+
+        if data_encontrada == data_selecionada:
+            return correspondencia.group(0)
+
+        return "[outra data omitida]"
+
+    return padrao.sub(
+        substituir,
+        trecho,
+    )
+
+
+def _priorizar_resultados_evento_futuro(
+    resultados: list[dict],
+    hoje,
+) -> list[dict]:
+    candidatos = []
+
+    for item in resultados:
+        titulo = str(
+            item.get(
+                "title",
+                "",
+            )
+        ).strip()
+
+        descricao = str(
+            item.get(
+                "description",
+                "",
+            )
+        ).strip()
+
+        conteudo = str(
+            item.get(
+                "content",
+                "",
+            )
+        ).strip()
+
+        dominio = str(
+            item.get(
+                "domain",
+                "",
+            )
+        ).strip().lower()
+
+        texto_item = " ".join(
+            (
+                titulo,
+                descricao,
+                conteudo,
+            )
+        )
+
+        evento = _extrair_primeiro_evento_futuro(
+            texto_item,
+            hoje,
+        )
+
+        if evento is None:
+            continue
+
+        data_evento = evento[0]
+        inicio_data = evento[1]
+        fim_data = evento[2]
+
+        inicio_trecho = max(
+            0,
+            inicio_data - 400,
+        )
+
+        fim_trecho = min(
+            len(texto_item),
+            fim_data + 900,
+        )
+
+        trecho = texto_item[
+            inicio_trecho:fim_trecho
+        ].strip()
+
+        trecho = _limpar_datas_do_trecho(
+            trecho,
+            hoje,
+            data_evento,
+        )
+
+        texto_normalizado = normalizar(
+            texto_item
+        )
+
+        score = 0
+
+        if (
+            dominio == "palmeiras.com.br"
+            or dominio.endswith(
+                ".palmeiras.com.br"
+            )
+        ):
+            score += 20
+
+        if "palmeiras" in texto_normalizado:
+            score += 5
+
+        if any(
+            termo in texto_normalizado
+            for termo in (
+                "jogo",
+                "partida",
+                "confronto",
+                "enfrenta",
+                "arena",
+                "rodada",
+            )
+        ):
+            score += 5
+
+        if re.search(
+            r"\b\d{1,2}\s*[h:]\s*\d{2}\b",
+            trecho,
+            re.IGNORECASE,
+        ):
+            score += 4
+
+        candidatos.append(
+            {
+                "score": score,
+                "data_evento": data_evento,
+                "titulo": titulo,
+                "dominio": dominio,
+                "url": str(
+                    item.get(
+                        "url",
+                        "",
+                    )
+                ).strip(),
+                "source_date": str(
+                    item.get(
+                        "source_date",
+                        "",
+                    )
+                ).strip(),
+                "trecho_evento": trecho,
+            }
+        )
+
+    if not candidatos:
+        return []
+
+    menor_data = min(
+        item["data_evento"]
+        for item in candidatos
+    )
+
+    candidatos = [
+        item
+        for item in candidatos
+        if item["data_evento"] == menor_data
+    ]
+
+    candidatos.sort(
+        key=lambda item: item["score"],
+        reverse=True,
+    )
+
+    resultados_filtrados = []
+
+    for item in candidatos[:3]:
+        resultados_filtrados.append(
+            {
+                "title": item["titulo"],
+                "domain": item["dominio"],
+                "url": item["url"],
+                "source_date": item["source_date"],
+                "content": (
+                    "EVENTO FUTURO IDENTIFICADO:\n"
+                    f"Data do evento: "
+                    f"{item['data_evento'].strftime('%d/%m/%Y')}\n"
+                    "Trecho relevante da fonte:\n"
+                    f"{item['trecho_evento']}"
+                ),
+            }
+        )
+
+    return resultados_filtrados
+
+
 def montar_contexto_web(
     resultados: list[dict],
     consulta: str = "",
@@ -971,6 +1301,15 @@ def montar_contexto_web(
         consulta
     )
 
+    if evento_futuro:
+        resultados = _priorizar_resultados_evento_futuro(
+            resultados,
+            hoje,
+        )
+
+        if not resultados:
+            return ""
+
     fontes_recentes = verificar_atualidade(
         resultados,
         dias_maximos=7,
@@ -978,7 +1317,7 @@ def montar_contexto_web(
 
     partes = [
         "CONTEXTO DE PESQUISA WEB DO J.A.R.V.I.S.",
-        f"Data atual de referência: {hoje.isoformat()}",
+        f"Data atual de refer\u00eancia: {hoje.isoformat()}",
         "Os dados abaixo foram obtidos por pesquisa web.",
         "",
     ]
@@ -986,26 +1325,36 @@ def montar_contexto_web(
     if evento_futuro:
         partes.extend([
             "A consulta trata de um evento futuro.",
-            "A idade da publicação da fonte não significa que "
-            "o evento futuro esteja desatualizado.",
-            "Use as informações encontradas para identificar "
-            "o próximo evento.",
-            "Não invente informações ausentes.",
+            "Foram selecionadas as fontes cujo primeiro "
+            "evento futuro coincide com a data mais pr\u00f3xima "
+            "encontrada nas fontes.",
+            "Datas anteriores ao dia atual n\u00e3o devem ser "
+            "usadas como resposta.",
+            "Quando houver fonte oficial do Palmeiras, "
+            "ela tem prioridade em caso de conflito.",
+            "Use exclusivamente os eventos apresentados "
+            "abaixo.",
+            "N\u00e3o invente informa\u00e7\u00f5es ausentes.",
             "",
         ])
+
     elif fontes_recentes:
         partes.extend([
-            "As fontes possuem atualização recente.",
+            "As fontes possuem atualiza\u00e7\u00e3o recente.",
             "Use os dados encontrados para responder.",
-            "Não invente informações ausentes.",
+            "N\u00e3o invente informa\u00e7\u00f5es ausentes.",
             "",
         ])
+
     else:
         partes.extend([
-            "ATENÇÃO: as fontes encontradas estão desatualizadas.",
-            "Não trate esses dados como informação atual.",
-            "Não invente ou estime acontecimentos posteriores à data das fontes.",
-            "Quando a pergunta depender de informação atual, informe que as fontes disponíveis não são recentes o suficiente.",
+            "ATEN\u00c7\u00c3O: as fontes encontradas est\u00e3o desatualizadas.",
+            "N\u00e3o trate esses dados como informa\u00e7\u00e3o atual.",
+            "N\u00e3o invente ou estime acontecimentos posteriores "
+            "\u00e0 data das fontes.",
+            "Quando a pergunta depender de informa\u00e7\u00e3o atual, "
+            "informe que as fontes dispon\u00edveis n\u00e3o s\u00e3o "
+            "recentes o suficiente.",
             "",
         ])
 
@@ -1014,27 +1363,45 @@ def montar_contexto_web(
         start=1,
     ):
         titulo = str(
-            item.get("title", "")
+            item.get(
+                "title",
+                "",
+            )
         ).strip()
 
         dominio = str(
-            item.get("domain", "")
+            item.get(
+                "domain",
+                "",
+            )
         ).strip()
 
         url = str(
-            item.get("url", "")
+            item.get(
+                "url",
+                "",
+            )
         ).strip()
 
         data_fonte = str(
-            item.get("source_date", "")
+            item.get(
+                "source_date",
+                "",
+            )
         ).strip()
 
         descricao = str(
-            item.get("description", "")
+            item.get(
+                "description",
+                "",
+            )
         ).strip()
 
         conteudo = str(
-            item.get("content", "")
+            item.get(
+                "content",
+                "",
+            )
         ).strip()
 
         partes.append(
@@ -1043,7 +1410,7 @@ def montar_contexto_web(
 
         if dominio:
             partes.append(
-                f"Domínio: {dominio}"
+                f"Dom\u00ednio: {dominio}"
             )
 
         if data_fonte:
@@ -1062,15 +1429,12 @@ def montar_contexto_web(
         )
 
         if texto_fonte:
-            texto_fonte = texto_fonte[:6000]
+            texto_fonte = texto_fonte[:4000]
+
             partes.append(
-                f"CONTEÚDO:\n{texto_fonte}"
+                f"CONTE\u00daDO:\n{texto_fonte}"
             )
 
         partes.append("")
 
     return "\n".join(partes)
-
-
-
-
