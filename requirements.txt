@@ -3,7 +3,3 @@ uvicorn[standard]
 requests
 python-dotenv
 psycopg[binary]
-tavily-python
-langchain
-langchain-community
-ddgs

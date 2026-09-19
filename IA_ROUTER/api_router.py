@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 import re
@@ -811,6 +811,31 @@ def compact_dialogue_text(value: Any, max_chars: int = DIALOGUE_MAX_CHARS) -> st
         + marker
         + text[-last:].lstrip()
     )
+def extrair_blocos_estilo(texto: str) -> dict[str, str]:
+    linhas = texto.splitlines()
+    blocos = {}
+    inicio = None
+    titulo = None
+
+    for i, linha in enumerate(linhas):
+        t = linha.strip()
+
+        if t.isupper() and len(t) >= 4:
+            if titulo is not None:
+                blocos[titulo] = "\n".join(
+                    linhas[inicio:i]
+                ).strip()
+
+            titulo = t
+            inicio = i
+
+    if titulo is not None:
+        blocos[titulo] = "\n".join(
+            linhas[inicio:]
+        ).strip()
+
+    return blocos
+
 def prepare_dialogue_messages(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -2270,6 +2295,3 @@ if __name__ == "__main__":
         host="127.0.0.1",
         port=8765,
     )
-
-
-

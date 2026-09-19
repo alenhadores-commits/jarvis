@@ -31,21 +31,35 @@ def limpar_html(texto: str) -> str:
 def consulta_temporal(consulta: str) -> bool:
     texto = normalizar(consulta)
 
-    return any(
+    termos = (
+        "proximo",
+        "proxima",
+        "proximos",
+        "proximas",
+        "amanha",
+        "ultimo",
+        "ultima",
+        "ultimos",
+        "ultimas",
+        "ontem",
+        "hoje",
+        "agora",
+        "atual",
+        "atualmente",
+        "recentemente",
+        "recentes",
+    )
+
+    if any(
         termo in texto
-        for termo in (
-            "proximo",
-            "proxima",
-            "proximos",
-            "proximas",
-            "amanha",
-            "ultimo",
-            "ultima",
-            "ultimos",
-            "ultimas",
-            "hoje",
-            "agora",
-            "atual",
+        for termo in termos
+    ):
+        return True
+
+    return bool(
+        re.search(
+            r"\b\d{1,2}[/-]\d{1,2}[/-]\d{4}\b",
+            texto,
         )
     )
 
@@ -174,7 +188,11 @@ def pesquisar_google_news(
 def preparar_consulta(
     consulta: str,
 ) -> list[str]:
-    consulta_original = str(consulta or "").strip()
+    from datetime import timedelta
+
+    consulta_original = str(
+        consulta or ""
+    ).strip()
 
     if not consulta_original:
         return []
@@ -190,8 +208,25 @@ def preparar_consulta(
         consulta_normalizada
     )
 
+    data_absoluta = None
+
+    match_data = re.search(
+        r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b",
+        consulta_normalizada,
+    )
+
+    if match_data:
+        try:
+            data_absoluta = datetime(
+                int(match_data.group(3)),
+                int(match_data.group(2)),
+                int(match_data.group(1)),
+            ).date()
+        except ValueError:
+            data_absoluta = None
+
     base = re.sub(
-        r"[^\w?-?\s]",
+        r"[^\w\s]",
         " ",
         consulta_normalizada,
         flags=re.UNICODE,
@@ -215,6 +250,7 @@ def preparar_consulta(
         "por",
         "que",
         "porque",
+        "foi",
         "o",
         "a",
         "os",
@@ -263,10 +299,31 @@ def preparar_consulta(
     adicionar(base)
 
     if temporal:
+
         hoje = datetime.now().date()
+        ontem = hoje - timedelta(days=1)
+        amanha = hoje + timedelta(days=1)
 
         ano = hoje.year
-        mes = hoje.strftime("%B")
+
+        meses = (
+            "janeiro",
+            "fevereiro",
+            "marco",
+            "abril",
+            "maio",
+            "junho",
+            "julho",
+            "agosto",
+            "setembro",
+            "outubro",
+            "novembro",
+            "dezembro",
+        )
+
+        mes = meses[
+            hoje.month - 1
+        ]
 
         termos_sem_temporal = [
             p
@@ -285,6 +342,9 @@ def preparar_consulta(
                 "hoje",
                 "agora",
                 "atual",
+                "atualmente",
+                "recentemente",
+                "recentes",
             }
         ]
 
@@ -294,7 +354,10 @@ def preparar_consulta(
 
         if base_forte:
 
-            if consulta_evento_futuro(consulta_normalizada):
+            if consulta_evento_futuro(
+                consulta_normalizada
+            ):
+
                 adicionar(
                     f"{base_forte} proximo jogo"
                 )
@@ -319,6 +382,22 @@ def preparar_consulta(
                     f"{base_forte} calendario"
                 )
 
+                if "amanha" in consulta_normalizada:
+
+                    data_ref = amanha
+
+                    adicionar(
+                        f"{base_forte} "
+                        f"{data_ref.strftime('%d/%m/%Y')}"
+                    )
+
+                    adicionar(
+                        f"{base_forte} "
+                        f"{data_ref.day} "
+                        f"{meses[data_ref.month - 1]} "
+                        f"{data_ref.year}"
+                    )
+
                 adicionar(
                     f"{base_forte} {mes} {ano}"
                 )
@@ -327,7 +406,10 @@ def preparar_consulta(
                     f"{base_forte} jogos {ano}"
                 )
 
-            elif consulta_passado_recente(consulta_normalizada):
+            elif consulta_passado_recente(
+                consulta_normalizada
+            ):
+
                 adicionar(
                     f"{base_forte} ultimo jogo"
                 )
@@ -340,11 +422,69 @@ def preparar_consulta(
                     f"{base_forte} jogo anterior"
                 )
 
-                adicionar(
-                    f"{base_forte} {mes} {ano}"
-                )
+                if "ontem" in consulta_normalizada:
 
-            elif consulta_atualidade(consulta_normalizada):
+                    data_ref = ontem
+
+                    data_numerica = (
+                        data_ref.strftime(
+                            "%d/%m/%Y"
+                        )
+                    )
+
+                    nome_mes = meses[
+                        data_ref.month - 1
+                    ]
+
+                    adicionar(
+                        f"{base_forte} "
+                        f"resultado {data_numerica}"
+                    )
+
+                    adicionar(
+                        f"{base_forte} "
+                        f"jogo {data_numerica}"
+                    )
+
+                    adicionar(
+                        f"{base_forte} "
+                        f"partida {data_numerica}"
+                    )
+
+                    adicionar(
+                        f"{base_forte} "
+                        f"resultados "
+                        f"{data_ref.day} "
+                        f"{nome_mes} "
+                        f"{data_ref.year}"
+                    )
+
+                elif data_absoluta is not None:
+
+                    adicionar(
+                        f"{base_forte} "
+                        f"resultado "
+                        f"{data_absoluta.strftime('%d/%m/%Y')}"
+                    )
+
+                else:
+
+                    adicionar(
+                        f"{base_forte} "
+                        f"{mes} {ano}"
+                    )
+
+            elif consulta_atualidade(
+                consulta_normalizada
+            ):
+
+                if "hoje" in consulta_normalizada:
+
+                    adicionar(
+                        f"{base_forte} "
+                        f"{hoje.strftime('%d/%m/%Y')}"
+                    )
+
                 adicionar(
                     f"{base_forte} {mes} {ano}"
                 )
@@ -354,6 +494,7 @@ def preparar_consulta(
                 )
 
     else:
+
         adicionar(
             " ".join(palavras)
         )
@@ -615,7 +756,7 @@ def pontuar_resultado(
 
 
 def deve_pesquisar(mensagem: str) -> bool:
-    """Determina se a mensagem precisa de pesquisa na web."""
+    """Determina se a mensagem realmente precisa de pesquisa na web."""
     if not isinstance(mensagem, str):
         return False
 
@@ -624,39 +765,58 @@ def deve_pesquisar(mensagem: str) -> bool:
     if not texto:
         return False
 
-    termos_pesquisa = (
-        "quem",
-        "qual",
-        "quais",
-        "quando",
-        "onde",
-        "como",
-        "quanto",
-        "quantos",
-        "quantas",
-        "por que",
-        "porque",
+    # 1. Pesquisa explicitamente solicitada pelo usuario.
+    termos_explicitos = (
         "pesquise",
         "pesquisar",
         "pesquisa",
         "procure",
         "buscar",
         "busque",
-        "noticia",
-        "noticias",
-        "atual",
-        "agora",
+        "pesquisa na internet",
+        "pesquisa na web",
+        "consulte na internet",
+        "consulte na web",
+    )
+
+    if any(termo in texto for termo in termos_explicitos):
+        return True
+
+    # 2. Informacao dinamica ou temporal.
+    termos_temporais = (
         "hoje",
+        "agora",
         "ontem",
         "amanha",
-        "proximo",
-        "proxima",
-        "proximos",
-        "proximas",
-        "ultimo",
+        "atual",
+        "atualmente",
+        "neste momento",
+        "nesse momento",
+        "recentemente",
+        "recentes",
         "ultima",
-        "ultimos",
+        "ultimo",
         "ultimas",
+        "ultimos",
+        "proxima",
+        "proximo",
+        "proximas",
+        "proximos",
+    )
+
+    if any(termo in texto for termo in termos_temporais):
+        return True
+
+    # 3. Categorias que normalmente dependem de dados atuais.
+    termos_dinamicos = (
+        "noticia",
+        "noticias",
+        "preco",
+        "precos",
+        "cotacao",
+        "cotacoes",
+        "salario",
+        "salarios",
         "agenda",
         "calendario",
         "jogo",
@@ -667,17 +827,64 @@ def deve_pesquisar(mensagem: str) -> bool:
         "confrontos",
         "resultado",
         "resultados",
-        "preco",
-        "precos",
-        "cotacao",
-        "salario",
-        "lei",
-        "legislacao",
-        "decreto",
-        "portaria",
+        "placar",
+        "placares",
+        "classificacao",
+        "tabela",
+        "ranking",
+        "evento",
+        "eventos",
+        "horario",
+        "horarios",
     )
 
-    return any(termo in texto for termo in termos_pesquisa)
+    if any(termo in texto for termo in termos_dinamicos):
+        return True
+
+    # 4. Consultas sobre pessoas/cargos que explicitamente pedem
+    #    situacao atual.
+    termos_cargo_atual = (
+        "atual presidente",
+        "atual governador",
+        "atual prefeito",
+        "atual ministro",
+        "atual presidente",
+        "quem e o presidente atual",
+        "quem e o governador atual",
+        "quem e o prefeito atual",
+    )
+
+    if any(termo in texto for termo in termos_cargo_atual):
+        return True
+
+    # 5. Leis e normas podem mudar e devem ser verificadas na web.
+    termos_juridicos = (
+        "lei atual",
+        "lei vigente",
+        "legislacao atual",
+        "legislacao vigente",
+        "decreto atual",
+        "decreto vigente",
+        "portaria atual",
+        "portaria vigente",
+        "norma atual",
+        "norma vigente",
+    )
+
+    if any(termo in texto for termo in termos_juridicos):
+        return True
+
+    # 6. Perguntas factuais estaveis ficam com a IA.
+    #    Exemplos:
+    #      "qual a capital do Brasil"
+    #      "quem foi Albert Einstein"
+    #      "quanto e 2 + 2"
+    #      "como funciona um motor eletrico"
+    #
+    #    Isso reduz chamadas web e consumo de tokens sem impedir
+    #    pesquisas explicitamente solicitadas ou informacoes atuais.
+
+    return False
 
 def verificar_atualidade(resultados, dias_maximos=7):
     """Retorna somente resultados com data dentro da janela de atualidade."""
@@ -960,7 +1167,7 @@ def _extrair_primeiro_evento_futuro(
     texto: str,
     hoje,
 ):
-    padrao = re.compile(
+    padrao_data = re.compile(
         r"(?<!\d)"
         r"(\d{1,2})[/-]"
         r"(\d{1,2})"
@@ -970,80 +1177,90 @@ def _extrair_primeiro_evento_futuro(
 
     candidatos = []
 
-    for correspondencia in padrao.finditer(texto):
-        dia = int(correspondencia.group(1))
-        mes = int(correspondencia.group(2))
-        ano_texto = correspondencia.group(3)
+    linhas = [
+        linha.strip()
+        for linha in str(texto or "").splitlines()
+        if linha.strip()
+    ]
 
-        if ano_texto:
-            ano = int(ano_texto)
-        else:
-            # Para datas sem ano, tenta associar o ano mais
-            # pr?ximo no pr?prio trecho da fonte.
-            inicio = max(
-                0,
-                correspondencia.start() - 180,
-            )
+    for indice_linha, linha in enumerate(linhas):
 
-            fim = min(
-                len(texto),
-                correspondencia.end() + 180,
-            )
+        linha_normalizada = normalizar(
+            linha
+        )
 
-            janela = texto[
-                inicio:fim
-            ]
-
-            anos = []
-
-            for ano_match in re.finditer(
-                r"\b(20\d{2})\b",
-                janela,
-            ):
-                anos.append(
-                    (
-                        abs(
-                            (
-                                inicio
-                                + ano_match.start()
-                            )
-                            - correspondencia.start()
-                        ),
-                        int(
-                            ano_match.group(1)
-                        ),
-                    )
-                )
-
-            if anos:
-                anos.sort(
-                    key=lambda item: item[0]
-                )
-
-                ano = anos[0][1]
-            else:
-                ano = hoje.year
-
-        try:
-            data_evento = datetime(
-                ano,
-                mes,
-                dia,
-                tzinfo=timezone.utc,
-            ).date()
-        except ValueError:
+        # A linha precisa mencionar Palmeiras.
+        if "palmeiras" not in linha_normalizada:
             continue
 
-        if data_evento < hoje:
-            continue
-
-        candidatos.append(
-            (
-                data_evento,
-                correspondencia.start(),
-                correspondencia.end(),
+        # Precisa parecer uma linha de partida/confronto.
+        tem_evento = any(
+            sinal in linha_normalizada
+            for sinal in (
+                " x ",
+                "×",
+                " vs ",
+                "vs.",
+                " contra ",
+                " enfrenta ",
+                " jogo ",
+                " partida ",
+                " confronto ",
             )
         )
+
+        if not tem_evento:
+            continue
+
+        for correspondencia in padrao_data.finditer(
+            linha
+        ):
+
+            dia = int(
+                correspondencia.group(1)
+            )
+
+            mes = int(
+                correspondencia.group(2)
+            )
+
+            ano_texto = correspondencia.group(3)
+
+            if ano_texto:
+
+                ano = int(
+                    ano_texto
+                )
+
+            else:
+
+                ano = hoje.year
+
+            try:
+
+                data_evento = datetime(
+                    ano,
+                    mes,
+                    dia,
+                    tzinfo=timezone.utc,
+                ).date()
+
+            except ValueError:
+
+                continue
+
+            if data_evento < hoje:
+                continue
+
+            candidatos.append(
+                (
+                    data_evento,
+                    indice_linha,
+                    correspondencia.start(),
+                    correspondencia.end(),
+                    linha,
+                )
+            )
 
     if not candidatos:
         return None
@@ -1052,10 +1269,17 @@ def _extrair_primeiro_evento_futuro(
         key=lambda item: (
             item[0],
             item[1],
+            item[2],
         )
     )
 
-    return candidatos[0]
+    escolhido = candidatos[0]
+
+    return (
+        escolhido[0],
+        escolhido[2],
+        escolhido[3],
+    )
 
 
 def _limpar_datas_do_trecho(

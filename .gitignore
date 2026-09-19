@@ -79,3 +79,9 @@ JARVIS_BASE/voz_neural/driver_acer_nvidia.zip
 
 # Banco local do IA Router
 IA_ROUTER/router.db
+# Artefatos MCP locais
+*.tgz
+_mcp_inspecao/
+_patch_*.py
+_teste_*.py
+mcp_servers*.json

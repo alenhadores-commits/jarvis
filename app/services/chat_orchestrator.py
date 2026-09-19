@@ -226,143 +226,255 @@ class ChatOrchestrator:
 
     def extrair_resposta_evento_futuro(
         self,
-        contexto_web: str,
-        mensagem: str,
+        contexto: str,
+        consulta: str,
     ) -> str:
-        if not consulta_evento_futuro(mensagem):
+        import re
+        from datetime import datetime
+
+        if not contexto:
             return ""
 
-        data_match = re.search(
+        match_data = re.search(
             r"Data do evento:\s*(\d{2}/\d{2}/\d{4})",
-            contexto_web,
-        )
-
-        if not data_match:
-            return ""
-
-        data_evento = data_match.group(1)
-        data_curta = data_evento[:5]
-
-        inicio = data_match.end()
-
-        proxima_fonte = contexto_web.find(
-            "\n[FONTE ",
-            inicio,
-        )
-
-        if proxima_fonte < 0:
-            proxima_fonte = len(contexto_web)
-
-        bloco = contexto_web[
-            inicio:proxima_fonte
-        ]
-
-        linhas = [
-            linha.strip()
-            for linha in bloco.splitlines()
-            if linha.strip()
-        ]
-
-        padrao_confronto = re.compile(
-            r"\b([\w?-?.'-]+)\s+[Xx?]\s+([\w?-?.'-]+)\b",
-            re.UNICODE,
-        )
-
-        confronto = None
-        linha_evento = ""
-
-        # Primeiro tenta a linha que cont?m:
-        # data + Palmeiras + confronto.
-        for linha in linhas:
-            linha_normalizada = normalizar(linha)
-
-            if data_curta not in linha:
-                continue
-
-            if "palmeiras" not in linha_normalizada:
-                continue
-
-            confrontos = padrao_confronto.findall(linha)
-
-            for mandante, visitante in confrontos:
-                nomes = normalizar(
-                    f"{mandante} {visitante}"
-                )
-
-                if "palmeiras" not in nomes:
-                    continue
-
-                confronto = (
-                    mandante.strip(
-                        " |:-,.;"
-                    ),
-                    visitante.strip(
-                        " |:-,.;"
-                    ),
-                )
-
-                linha_evento = linha
-                break
-
-            if confronto:
-                break
-
-        if not confronto:
-            return ""
-
-        mandante, visitante = confronto
-
-        pos_data = linha_evento.find(
-            data_curta
-        )
-
-        if pos_data < 0:
-            return ""
-
-        trecho = linha_evento[
-            pos_data:
-            pos_data + 180
-        ]
-
-        hora_match = re.search(
-            r"\b(\d{1,2})\s*[hH:]\s*(\d{2})\b",
-            trecho,
-        )
-
-        if not hora_match:
-            return ""
-
-        hora = (
-            f"{int(hora_match.group(1)):02d}:"
-            f"{int(hora_match.group(2)):02d}"
-        )
-
-        local_match = re.search(
-            r"\bArena\s+(?:do|da|de)\s+"
-            r"[\w?-?.'-]+"
-            r"(?:\s+[\w?-?.'-]+){0,2}",
-            trecho,
+            contexto,
             re.IGNORECASE,
         )
 
-        local = (
-            local_match.group(0).strip()
-            if local_match
-            else ""
+        if not match_data:
+            return ""
+
+        try:
+            data_evento = datetime.strptime(
+                match_data.group(1),
+                "%d/%m/%Y",
+            ).date()
+        except ValueError:
+            return ""
+
+        data_curta = (
+            f"{data_evento.day:02d}/"
+            f"{data_evento.month:02d}"
         )
 
-        resposta = (
-            f"O pr?ximo jogo do Palmeiras ? "
-            f"{mandante} x {visitante}, "
-            f"{data_evento} ?s {hora}."
+        data_completa = data_evento.strftime("%d/%m/%Y")
+
+        if not re.search(
+            r"\bpalmeiras\b",
+            consulta,
+            re.IGNORECASE,
+        ):
+            return ""
+
+        separador_re = re.compile(
+            r"\s+(?:x|×|vs\.?|contra|enfrenta)\s+",
+            re.IGNORECASE,
         )
 
-        if local:
-            resposta += (
-                f" Local: {local}."
+        linhas = contexto.splitlines()
+
+        candidatos = []
+
+        for indice, linha in enumerate(linhas):
+            original = linha.strip()
+
+            if not original:
+                continue
+
+            baixo = original.lower()
+
+            if (
+                data_curta not in baixo
+                and data_completa not in baixo
+            ):
+                continue
+
+            if "palmeiras" not in baixo:
+                continue
+
+            separador = separador_re.search(original)
+
+            if not separador:
+                continue
+
+            match_data_linha = re.search(
+                rf"\b{re.escape(data_curta)}(?:/{data_evento.year})?\b",
+                original,
+                re.IGNORECASE,
             )
 
-        return resposta
+            if match_data_linha:
+                evento_linha = original[
+                    match_data_linha.end():
+                ].strip(" ·•|_-–—")
+            else:
+                evento_linha = original
+
+            separador = separador_re.search(evento_linha)
+
+            if not separador:
+                continue
+
+            lado_esquerdo = evento_linha[
+                :separador.start()
+            ].strip(" ·•|_-–—")
+
+            lado_direito = evento_linha[
+                separador.end():
+            ].strip(" ·•|_-–—")
+
+            def limpar_time(
+                trecho: str,
+                time_alvo: str = "Palmeiras",
+            ) -> str:
+                texto = re.sub(
+                    r"\s+",
+                    " ",
+                    trecho.strip(),
+                )
+
+                if not texto:
+                    return ""
+
+                alvo = re.search(
+                    rf"\b{re.escape(time_alvo)}\b",
+                    texto,
+                    re.IGNORECASE,
+                )
+
+                if alvo:
+                    return time_alvo
+
+                texto = re.sub(
+                    r"\s+(?:Arena|Allianz Parque|"
+                    r"Estádio|Estadio)\b.*$",
+                    "",
+                    texto,
+                    flags=re.IGNORECASE,
+                )
+
+                texto = re.split(
+                    r"\s*[·•|]\s*"
+                    r"|\s+\d{1,2}(?:h|:)\d{2}\b",
+                    texto,
+                    maxsplit=1,
+                    flags=re.IGNORECASE,
+                )[0]
+
+                texto = re.sub(
+                    r"^\d+\s+",
+                    "",
+                    texto,
+                )
+
+                return texto.strip(" ·•|_-–—")
+
+            mandante = limpar_time(
+                lado_esquerdo
+            )
+
+            visitante = limpar_time(
+                lado_direito
+            )
+
+            if not mandante or not visitante:
+                continue
+
+            if (
+                "palmeiras" not in mandante.lower()
+                and "palmeiras" not in visitante.lower()
+            ):
+                continue
+
+            match_hora = re.search(
+                r"\b((?:[01]?\d|2[0-3]))"
+                r"(?:h|:)"
+                r"([0-5]\d)\b",
+                original,
+                re.IGNORECASE,
+            )
+
+            hora = ""
+
+            if match_hora:
+                hora = (
+                    f"{int(match_hora.group(1)):02d}:"
+                    f"{match_hora.group(2)}"
+                )
+
+            match_local = re.search(
+                r"\b("
+                r"(?:Arena|Allianz Parque|"
+                r"Estádio|Estadio)"
+                r"[^·|]*?"
+                r")(?=\s*(?:·|•|"
+                r"(?:[01]?\d|2[0-3])(?:h|:)[0-5]\d\b"
+                r"|$))",
+                evento_linha,
+                re.IGNORECASE,
+            )
+
+            local = ""
+
+            if match_local:
+                local = re.sub(
+                    r"\s+",
+                    " ",
+                    match_local.group(1),
+                ).strip(" ·•|_-–—")
+
+            dias_semana = {
+                0: "segunda-feira",
+                1: "terça-feira",
+                2: "quarta-feira",
+                3: "quinta-feira",
+                4: "sexta-feira",
+                5: "sábado",
+                6: "domingo",
+            }
+
+            dia_semana = dias_semana[
+                data_evento.weekday()
+            ]
+
+            if hora:
+                resposta = (
+                    f"O próximo jogo do Palmeiras é "
+                    f"{mandante} x {visitante}, "
+                    f"{dia_semana}, "
+                    f"{data_completa} às {hora}."
+                )
+            else:
+                resposta = (
+                    f"O próximo jogo do Palmeiras é "
+                    f"{mandante} x {visitante}, "
+                    f"{dia_semana}, "
+                    f"{data_completa}."
+                )
+
+            if local:
+                resposta += f" Local: {local}."
+
+            candidatos.append(
+                (
+                    data_evento,
+                    indice,
+                    resposta,
+                )
+            )
+
+        if not candidatos:
+            return ""
+
+        candidatos.sort(
+            key=lambda item: (
+                item[0],
+                item[1],
+            )
+        )
+
+        return candidatos[0][2]
+
 
     def montar_mensagens(
         self,
